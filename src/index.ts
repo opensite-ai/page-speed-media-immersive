@@ -1,111 +1,88 @@
-/**
- * @page-speed/blocks
- *
- * High-performance rendering runtime for @opensite/ui components
- * with pre-compiled Tailwind CSS and tree-shakable architecture
- */
+// Ensure process.env exists when the module is loaded directly in browser UMD
+// builds. Same shim used by @page-speed/img and @page-speed/video.
+type GlobalWithProcess = typeof globalThis & { process?: NodeJS.Process };
 
-// Re-export core components
-export {
-  BlocksRenderer,
-  genericBlockRenderer,
-  renderBlock,
-  BlocksProvider,
-  EnhancedBlocksRenderer
-} from "./core/index.js";
+const globalObject =
+  typeof globalThis !== "undefined"
+    ? (globalThis as GlobalWithProcess)
+    : undefined;
 
-export type {
-  BlocksRendererProps,
-  BlocksProviderProps,
-  EnhancedBlocksRendererProps
-} from "./core/index.js";
-
-// Re-export registry functions
-export {
-  registerBlockRenderer,
-  getBlockRenderer,
-  hasBlockRenderer,
-  unregisterBlockRenderer,
-  clearRegistry,
-  getRegisteredTypes,
-  registerRenderers,
-} from "./registry/index.js";
-
-// Re-export types
-export type {
-  Block,
-  DesignPayload,
-  BlockRenderContext,
-  BlockRendererProps,
-  BlockRenderer,
-  RegistryEntry,
-} from "./types/index.js";
-
-// Re-export utilities
-export {
-  extractClassName,
-  normalizeAttributes,
-  extractBackgroundStyle,
-  getRootBlocks,
-  getChildBlocks,
-  buildElementProps,
-  parseDesignPayload,
-} from "./utils/index.js";
-
-// Re-export custom renderers
-export {
-  pressableRenderer,
-  PRESSABLE_BLOCK_TYPES,
-  buttonRenderer,
-  BUTTON_BLOCK_TYPES,
-  linkRenderer,
-  LINK_BLOCK_TYPES,
-} from "./renderers/index.js";
-
-// Re-export UI components directly from dependencies
-export { Pressable } from "@page-speed/pressable";
-
-// Import for side effects - register default renderers
-import { registerBlockRenderer } from "./registry/index.js";
-import {
-  pressableRenderer,
-  PRESSABLE_BLOCK_TYPES,
-  buttonRenderer,
-  BUTTON_BLOCK_TYPES,
-  linkRenderer,
-  LINK_BLOCK_TYPES,
-} from "./renderers/index.js";
-
-/**
- * Initialize default renderers for common block types
- */
-export function initializeDefaultRenderers(): void {
-  // Register Pressable renderer for multiple types
-  PRESSABLE_BLOCK_TYPES.forEach(type => {
-    registerBlockRenderer(type, pressableRenderer);
-  });
-
-  // Register Button renderer
-  BUTTON_BLOCK_TYPES.forEach(type => {
-    registerBlockRenderer(type, buttonRenderer);
-  });
-
-  // Register Link renderer
-  LINK_BLOCK_TYPES.forEach(type => {
-    registerBlockRenderer(type, linkRenderer);
-  });
-}
-
-// Auto-initialize if in browser environment
-if (typeof window !== "undefined" && typeof document !== "undefined") {
-  // Allow opt-out via global flag
-  if (!(window as any).__PAGE_SPEED_BLOCKS_NO_AUTO_INIT__) {
-    initializeDefaultRenderers();
+if (globalObject) {
+  if (!globalObject.process) {
+    globalObject.process = {
+      env: { NODE_ENV: "production" } as NodeJS.ProcessEnv,
+    } as NodeJS.Process;
+  } else {
+    const env =
+      globalObject.process.env ??
+      (globalObject.process.env = {} as NodeJS.ProcessEnv);
+    if (typeof env.NODE_ENV === "undefined") {
+      env.NODE_ENV = "production";
+    }
   }
 }
 
-/**
- * Default export - EnhancedBlocksRenderer component
- * This version includes RouterProvider for Pressable components
- */
-export { EnhancedBlocksRenderer as default } from "./core/index.js";
+// ── Public API ───────────────────────────────────────────────────────────────
+
+// Core components
+export {
+  ImmersiveFeed,
+  ImmersiveFeedProvider,
+  useImmersiveFeed,
+  useActionContext,
+  ImmersiveViewer,
+  ImmersiveViewerHeader,
+  ImmersiveViewerActions,
+  ImmersiveViewerCaption,
+} from "./core/index.js";
+export type {
+  ImmersiveFeedProps,
+  ImmersiveFeedProviderProps,
+  ImmersiveViewerProps,
+  ImmersiveViewerHeaderProps,
+  ImmersiveViewerActionsProps,
+  ImmersiveViewerCaptionProps,
+} from "./core/index.js";
+
+// Thumbnail primitives
+export {
+  ThumbnailCard,
+  ThumbnailStrip,
+} from "./thumbnails/index.js";
+export type {
+  ThumbnailCardProps,
+  ThumbnailStripProps,
+  ThumbnailSize,
+} from "./thumbnails/index.js";
+
+// Portal
+export {
+  ImmersivePortal,
+  injectScopedStylesheet,
+  ejectScopedStylesheet,
+} from "./portal/index.js";
+export type { ImmersivePortalProps } from "./portal/index.js";
+
+// Hooks
+export {
+  useScrollLock,
+  useResponsiveness,
+  useKeyboardShortcuts,
+  useVerticalPagerGestures,
+} from "./hooks/index.js";
+export type {
+  Breakpoint,
+  ResponsivenessInfo,
+  UseVerticalPagerGesturesOptions,
+  UseVerticalPagerGesturesResult,
+} from "./hooks/index.js";
+
+// Types
+export type {
+  MediaItem,
+  ImmersiveAction,
+  ActionContext,
+  ImmersiveFeedHandle,
+  ImmersiveFeedState,
+  ImmersiveTheme,
+} from "./types/index.js";
