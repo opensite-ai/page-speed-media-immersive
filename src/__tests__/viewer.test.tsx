@@ -86,4 +86,35 @@ describe("<ImmersiveViewer> integration", () => {
     // The `muted` boolean prop must be true on the initial render.
     expect(video!.muted).toBe(true);
   });
+
+  it("renders the desktop chevron pager with prev disabled on the first item", () => {
+    render(<ImmersiveFeed items={items} initiallyOpen initialIndex={0} />);
+    const chevrons = document.querySelector(".psmi-chevrons") as HTMLElement | null;
+    expect(chevrons).not.toBeNull();
+    const prev = chevrons!.querySelector('button[aria-label="Previous video"]') as HTMLButtonElement;
+    const nxt = chevrons!.querySelector('button[aria-label="Next video"]') as HTMLButtonElement;
+    expect(prev.disabled).toBe(true);
+    expect(nxt.disabled).toBe(false);
+  });
+
+  it("chevron pager: next button disabled on last item", () => {
+    render(<ImmersiveFeed items={items} initiallyOpen initialIndex={items.length - 1} />);
+    const chevrons = document.querySelector(".psmi-chevrons")!;
+    const prev = chevrons.querySelector('button[aria-label="Previous video"]') as HTMLButtonElement;
+    const nxt = chevrons.querySelector('button[aria-label="Next video"]') as HTMLButtonElement;
+    expect(prev.disabled).toBe(false);
+    expect(nxt.disabled).toBe(true);
+  });
+
+  it("chevron next button advances the active index", () => {
+    render(<ImmersiveFeed items={items} initiallyOpen initialIndex={0} />);
+    const dialog = document.querySelector('[role="dialog"]')!;
+    // Counter starts at "1".
+    expect(dialog.querySelector(".psmi-counter")!.textContent).toContain("1");
+    const nxt = dialog.querySelector('button[aria-label="Next video"]') as HTMLButtonElement;
+    act(() => { nxt.click(); });
+    // After next: counter reads "2".
+    const counter = document.querySelector(".psmi-counter")!;
+    expect(counter.textContent).toContain("2");
+  });
 });
