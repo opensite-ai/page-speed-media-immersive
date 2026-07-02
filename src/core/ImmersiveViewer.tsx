@@ -151,81 +151,101 @@ export function ImmersiveViewer({
     setProgress(0);
   }, [activeIndex]);
 
-  // Enforce play/pause invariant: only the active video plays. Reset others'
-  // currentTime to 0.
+  // Autoplay strategy — the hard problem this whole feature revolves around.
   //
-  // Autoplay policy handling (Chrome/Safari/Firefox all agree):
-  //   - .play() on an unmuted <video> is rejected unless the element itself
-  //     was directly activated by a user gesture. On open(), the gesture is
-  //     on the thumbnail button — by the time this effect fires and the
-  //     <video> is mounted, the gesture has been consumed and the browser
-  //     will reject unmuted play with NotAllowedError.
-  //   - .play() on a muted <video> is unconditionally allowed.
-  //   - Once a play() promise resolves on a media element, subsequent
-  //     programmatic .muted = false toggles are honored without a fresh
-  //     gesture (the media element inherits the tab's activation state).
+  // Browser autoplay rules (Chrome/Safari/Firefox agree):
+  //   1. play() on a muted <video> is unconditionally allowed.
+  //   2. play() on an unmuted <video> is rejected unless that specific
+  //      element was directly activated by a user gesture within a short
+  //      window. On open(), the gesture landed on the thumbnail button
+  //      — by the time this viewer mounts, the gesture has been consumed
+  //      and cannot transfer to a freshly-mounted <video>.
+  //   3. Once a media element has actually started playing (a `playing`
+  //      event fires), subsequent programmatic .muted = false toggles are
+  //      honored without a fresh gesture.
   //
-  // Strategy: force the element to `muted=true` before calling .play(),
-  // then after the promise resolves, sync it to the consumer's requested
-  // muted state (`isMuted`). Transparent to the user — the video fades in
-  // already playing, and audio comes on within one animation frame.
+  // What we do:
+  //   * The <video> element in JSX renders with the hardcoded prop `muted`.
+  //     React never touches DOM .muted after mount (no prop diff), so an
+  //     imperative .muted = false will stick.
+  //   * We call .play() from an effect AND schedule a second attempt on the
+  //     next animation frame. Multiple play() calls are safe.
+  //   * A `playing` event listener on the active video fires the moment the
+  //     browser confirms real playback — that's when it's safe to unmute.
+  //     We flip element.muted = isMuted (the consumer's intent).
   //
-  // A separate effect below keeps element.muted in sync with isMuted when
-  // the user toggles the header mute button after the initial play.
+  // The provider's isMuted state ("what does the user want?") and the DOM
+  // element's .muted flag ("what audio is coming out right now?") are kept
+  // in sync via the `playing` listener plus the mute-toggle effect below.
+
+  const isMutedRef = useRef(isMuted);
+  isMutedRef.current = isMuted;
+
+  // Play effect: fires on open + on every activeIndex change.
   useEffect(() => {
     if (!isOpen) return;
+    let cancelled = false;
+    // Pause every non-active video and rewind it.
     for (const [idx, el] of videoRefs.current.entries()) {
-      if (idx === activeIndex) {
-        // Start the play cycle muted so autoplay is guaranteed.
-        el.muted = true;
-        const p = el.play();
-        if (p && typeof p.then === "function") {
-          p.then(() => {
-            // Sync to consumer's requested muted state after play succeeds.
-            // Reads from a ref so this effect doesn't re-fire on every
-            // mute toggle — mute changes are handled by the effect below.
-            el.muted = isMutedRef.current;
-          }).catch(() => {
-            const item = items[idx];
-            if (item) reportAutoplayBlocked(item);
-          });
-        } else {
-          // Legacy return value — assume success synchronously.
-          el.muted = isMutedRef.current;
-        }
-      } else {
+      if (idx !== activeIndex) {
         el.pause();
         try {
           el.currentTime = 0;
         } catch {
-          // Some formats reject seek before metadata loads — safe to ignore.
+          // Some codecs reject seek pre-metadata; ignore.
         }
       }
     }
-    // isMuted intentionally omitted — mute changes are handled separately
-    // and this effect should not restart playback on toggle.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const attemptPlay = () => {
+      if (cancelled) return;
+      const el = videoRefs.current.get(activeIndex);
+      if (!el) return;
+      // <video muted> in JSX guarantees el.muted === true here, so this
+      // play() call is unconditionally allowed by autoplay policy.
+      const p = el.play();
+      if (p && typeof p.catch === "function") {
+        p.catch(() => {
+          const item = items[activeIndex];
+          if (item) reportAutoplayBlocked(item);
+        });
+      }
+    };
+    // First attempt: right now (refs are populated by callback-ref).
+    attemptPlay();
+    // Second attempt: next frame, in case the browser needed a beat to
+    // parse the HLS master or decode enough MP4 to be play-ready.
+    const raf = requestAnimationFrame(attemptPlay);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+    };
   }, [activeIndex, isOpen, items, reportAutoplayBlocked]);
 
-  // Latest-ref for isMuted so the play effect above can read the freshest
-  // value inside its play() promise without depending on it.
-  const isMutedRef = useRef(isMuted);
-  isMutedRef.current = isMuted;
-
-  // Mute-sync effect: keep the active video element's .muted attribute in
-  // sync with the provider state without restarting playback. Runs on both
-  // active-index changes (new active video may need its muted flag synced)
-  // and on mute-toggle.
+  // Mute-sync effect: attach a `playing` listener to the active video so
+  // that when the browser confirms real playback (which grants media-
+  // element activation), we flip DOM .muted to match the consumer's intent.
+  //
+  // Also fires on mute toggles — if the video is ALREADY playing we sync
+  // immediately; otherwise the listener catches the next play event.
   useEffect(() => {
     if (!isOpen) return;
     const el = videoRefs.current.get(activeIndex);
     if (!el) return;
-    // Only sync if the initial play has already happened (readyState >= 2
-    // means the browser has current data and playback is viable). Before
-    // that, the play effect above owns the muted flag.
-    if (el.readyState >= 2) {
-      el.muted = isMuted;
+
+    const syncMuted = () => {
+      el.muted = isMutedRef.current;
+    };
+
+    // Immediate sync if the element is already playing.
+    if (!el.paused && el.readyState >= 2) {
+      syncMuted();
     }
+    // Also sync on every future `playing` event (fires on initial play and
+    // on any resume after pause/seek).
+    el.addEventListener("playing", syncMuted);
+    return () => {
+      el.removeEventListener("playing", syncMuted);
+    };
   }, [isMuted, activeIndex, isOpen]);
 
   // togglePlayPauseActive is declared below alongside the click handler; the
@@ -681,6 +701,83 @@ export function ImmersiveViewer({
               labels={labels}
             />
           )}
+
+        {/*
+          Desktop up/down chevrons.
+          A pair of circular buttons on the right side of the screen so
+          mouse users can page through videos without hunting for scroll-
+          wheel behavior. Hidden on touch-only devices via the `.psmi-
+          chevrons` scoped rule in the stylesheet — phones use swipe.
+          Individually disabled at the ends of the list.
+        */}
+        <div
+          className="psmi-chevrons"
+          role="group"
+          aria-label="Video pager"
+          style={{
+            position: "absolute",
+            top: "50%",
+            right: 24,
+            transform: "translateY(-50%)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 12,
+            zIndex: 3,
+          }}
+        >
+          <button
+            type="button"
+            onClick={prev}
+            disabled={activeIndex === 0}
+            aria-label="Previous video"
+            style={{
+              width: 40,
+              height: 40,
+              border: "none",
+              borderRadius: "50%",
+              background: "var(--psmi-chrome-bg, rgba(255,255,255,0.16))",
+              backdropFilter: "blur(8px)",
+              WebkitBackdropFilter: "blur(8px)",
+              color: "var(--psmi-chrome-fg, #fff)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: activeIndex === 0 ? "default" : "pointer",
+              opacity: activeIndex === 0 ? 0.35 : 1,
+              transition: "opacity 0.15s ease",
+            }}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6 15l6-6 6 6" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={next}
+            disabled={activeIndex >= total - 1}
+            aria-label="Next video"
+            style={{
+              width: 40,
+              height: 40,
+              border: "none",
+              borderRadius: "50%",
+              background: "var(--psmi-chrome-bg, rgba(255,255,255,0.16))",
+              backdropFilter: "blur(8px)",
+              WebkitBackdropFilter: "blur(8px)",
+              color: "var(--psmi-chrome-fg, #fff)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: activeIndex >= total - 1 ? "default" : "pointer",
+              opacity: activeIndex >= total - 1 ? 0.35 : 1,
+              transition: "opacity 0.15s ease",
+            }}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
+        </div>
 
         {/* Swipe-for-next hint */}
         {showSwipeHint && !swipeHintDismissed && activeIndex < total - 1 && (
