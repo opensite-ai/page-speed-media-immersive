@@ -200,11 +200,18 @@ export function ImmersiveViewer({
       if (cancelled) return;
       const el = videoRefs.current.get(activeIndex);
       if (!el) return;
-      // <video muted> in JSX guarantees el.muted === true here, so this
-      // play() call is unconditionally allowed by autoplay policy.
+      // Belt-and-suspenders: JSX renders <video muted> but React sets DOM
+      // property .muted only on mount, and browsers consult BOTH the
+      // property AND the HTML attribute when applying autoplay policy.
+      // Force both explicitly at play time so the muted-autoplay path is
+      // guaranteed regardless of React's internal timing.
+      el.muted = true;
+      el.setAttribute("muted", "");
       const p = el.play();
       if (p && typeof p.catch === "function") {
         p.catch(() => {
+          // Only fire the blocked callback if we've exhausted retries.
+          // The canplay/loadedmetadata listeners below will re-attempt.
           const item = items[activeIndex];
           if (item) reportAutoplayBlocked(item);
         });
@@ -212,12 +219,28 @@ export function ImmersiveViewer({
     };
     // First attempt: right now (refs are populated by callback-ref).
     attemptPlay();
-    // Second attempt: next frame, in case the browser needed a beat to
-    // parse the HLS master or decode enough MP4 to be play-ready.
+    // Second attempt: next frame, in case React's DOM commit finalizes
+    // property sync between now and the next paint.
     const raf = requestAnimationFrame(attemptPlay);
+    // Third safety net: listen for canplay and loadedmetadata events on
+    // the active video. These fire when the browser has enough data to
+    // start playback; retrying .play() at that moment succeeds even if
+    // the earlier attempts were rejected because the element wasn't yet
+    // decode-ready. (This is exactly what native <video autoplay muted>
+    // does under the hood.)
+    const el = videoRefs.current.get(activeIndex);
+    const onReadyForPlay = () => attemptPlay();
+    if (el) {
+      el.addEventListener("canplay", onReadyForPlay);
+      el.addEventListener("loadedmetadata", onReadyForPlay);
+    }
     return () => {
       cancelled = true;
       cancelAnimationFrame(raf);
+      if (el) {
+        el.removeEventListener("canplay", onReadyForPlay);
+        el.removeEventListener("loadedmetadata", onReadyForPlay);
+      }
     };
   }, [activeIndex, isOpen, items, reportAutoplayBlocked]);
 
@@ -233,7 +256,13 @@ export function ImmersiveViewer({
     if (!el) return;
 
     const syncMuted = () => {
-      el.muted = isMutedRef.current;
+      const wantMuted = isMutedRef.current;
+      el.muted = wantMuted;
+      // Keep the HTML attribute in step with the property so browsers that
+      // consult the attribute (e.g. for autoplay decisions on the next
+      // navigation) don't disagree with the property.
+      if (wantMuted) el.setAttribute("muted", "");
+      else el.removeAttribute("muted");
     };
 
     // Immediate sync if the element is already playing.
