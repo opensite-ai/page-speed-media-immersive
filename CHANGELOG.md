@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-07-01
+
+### Fixed
+- **Click on the active video now toggles play/pause reliably.** Introduced a
+  dedicated click-target overlay on the active viewport that captures pointer
+  events with `stopPropagation`, so a tap can never be interpreted as a pager
+  commit or bubble to unrelated handlers. Non-active pages ignore clicks.
+- **`<ImmersiveViewerHeader>` counter no longer floats over the video's top
+  center.** The counter now lives at the bottom-right of the video viewport,
+  where it stays legible against varying content. Hidden on viewports
+  narrower than 540px (mobile) via the `.psmi-counter` scoped rule.
+- **Badge alignment.** The `item.badge` chip is now at `top: 16, left: 16`
+  inside the 9:16 viewport (was `top: 60` in v0.2), so its top and left
+  gutters match visually.
+
+### Added
+- **Mouse-wheel navigation on desktop.** Scrolling in the fullscreen viewer
+  commits prev/next like the up/down arrow keys. Wheel input is accumulated
+  and rate-limited (`wheelCommitCooldownMs`, default 500ms) so a single
+  trackpad flick doesn't skip multiple videos. Touch-only devices skip this
+  handler and continue to use swipe. New `useVerticalPagerGestures` options:
+  `enableWheel`, `wheelCommitThreshold`, `wheelCommitCooldownMs`.
+
+### Changed
+- **`open()` unmutes on invocation.** Because `open()` is only ever called
+  from a user gesture (thumbnail click, Enter key, or an explicit imperative
+  call from a user action), the browser autoplay-with-sound policy is
+  satisfied. Starting unmuted matches user expectation of a takeover viewer.
+  Consumers who want silent-by-default can call `setMuted(true)` inside
+  `onOpen`.
+
 ## [0.2.0] - 2026-07-01
 
 ### Fixed

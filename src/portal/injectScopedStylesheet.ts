@@ -49,6 +49,12 @@ const SCOPED_CSS = `
     animation: none !important;
   }
 }
+/* Media counter ("3 / 7") is decorative on phones — the swipe hint already
+   communicates that there are more videos, and the counter eats caption space.
+   540px is the same coarse breakpoint we use for the thumbnail strip layout. */
+@media (max-width: 540px) {
+  [data-psmi-scope="root"] .psmi-counter { display: none; }
+}
 /* Thumbnail carousel styles (also scoped so they can be applied within a
    consumer page - the thumbnail primitives use data-psmi-scope="strip"). */
 [data-psmi-scope="strip"] .psmi-strip {

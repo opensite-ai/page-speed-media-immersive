@@ -21,6 +21,24 @@ export interface UseVerticalPagerGesturesOptions {
   onDragStart?: () => void;
   /** Called on gesture end regardless of whether it committed. */
   onDragEnd?: (committed: boolean) => void;
+  /**
+   * When true (default), the mouse wheel commits prev/next like the up/down
+   * arrow keys. Ignored on touch-only devices (they use swipe instead). Uses
+   * an accumulator + cooldown so a single trackpad flick doesn't skip pages.
+   */
+  enableWheel?: boolean;
+  /**
+   * Minimum accumulated wheel deltaY (absolute px) required to commit a page
+   * change. Default 40 — large enough that a single discrete-wheel detent
+   * commits, small enough that a soft trackpad flick still feels responsive.
+   */
+  wheelCommitThreshold?: number;
+  /**
+   * Minimum time between wheel-driven commits, in ms. Default 500 — roughly
+   * matches the pager's spring transition (320ms) plus a buffer so a fast
+   * flick can't skip several videos before the user can see each one.
+   */
+  wheelCommitCooldownMs?: number;
 }
 
 /**
@@ -75,6 +93,9 @@ export function useVerticalPagerGestures(
     rubberBand = 0.35,
     onDragStart,
     onDragEnd,
+    enableWheel = true,
+    wheelCommitThreshold = 40,
+    wheelCommitCooldownMs = 500,
   } = opts;
 
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -223,6 +244,83 @@ export function useVerticalPagerGestures(
       el.removeEventListener("pointercancel", cancel);
     };
   }, [handleDown, handleMove, handleUp, handleCancel]);
+
+  // Mouse-wheel navigation for desktop. Latest-refs so the handler always
+  // sees the current index/itemCount/onCommit without re-subscribing.
+  const indexRef = useRef(index);
+  indexRef.current = index;
+  const itemCountRef = useRef(itemCount);
+  itemCountRef.current = itemCount;
+  const onCommitRef = useRef(onCommit);
+  onCommitRef.current = onCommit;
+
+  useEffect(() => {
+    if (!enableWheel) return;
+    const el = containerRef.current;
+    if (!el) return;
+    // Skip devices that can't hover (touch-only) — they use swipe.
+    if (
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(hover: none)").matches
+    ) {
+      return;
+    }
+
+    let accumulator = 0;
+    let lastCommitTs = 0;
+    let resetTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const onWheel = (e: WheelEvent) => {
+      // Ignore horizontal wheels and pinch-zoom gestures.
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+      if (e.ctrlKey) return;
+
+      // Prevent underlying page scroll while the viewer owns the interaction.
+      e.preventDefault();
+
+      // Normalize deltaMode line/page to pixels for consistent behavior.
+      let deltaY = e.deltaY;
+      if (e.deltaMode === 1) deltaY *= 16;
+      else if (e.deltaMode === 2) deltaY *= 100;
+
+      accumulator += deltaY;
+
+      const now = e.timeStamp || Date.now();
+      const cooledDown = now - lastCommitTs >= wheelCommitCooldownMs;
+
+      if (cooledDown && accumulator >= wheelCommitThreshold) {
+        const cur = indexRef.current;
+        const max = itemCountRef.current - 1;
+        if (cur < max) {
+          onCommitRef.current(cur + 1);
+          lastCommitTs = now;
+        }
+        accumulator = 0;
+      } else if (cooledDown && accumulator <= -wheelCommitThreshold) {
+        const cur = indexRef.current;
+        if (cur > 0) {
+          onCommitRef.current(cur - 1);
+          lastCommitTs = now;
+        }
+        accumulator = 0;
+      }
+
+      // If the user pauses scrolling briefly, drop any partial accumulator
+      // so tiny leftover movement doesn't trigger a stale nav on next flick.
+      if (resetTimer) clearTimeout(resetTimer);
+      resetTimer = setTimeout(() => {
+        accumulator = 0;
+      }, 180);
+    };
+
+    // Non-passive so preventDefault() actually stops page scroll.
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      if (resetTimer) clearTimeout(resetTimer);
+    };
+  }, [enableWheel, wheelCommitThreshold, wheelCommitCooldownMs]);
 
   return { offset, isDragging, height, containerRef };
 }

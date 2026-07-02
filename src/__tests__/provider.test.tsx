@@ -67,6 +67,21 @@ describe("ImmersiveFeedProvider", () => {
     expect(onOpen).toHaveBeenCalledWith(items[1]);
   });
 
+  it("open() unmutes even when initiallyMuted is true (user-gesture policy)", () => {
+    const { getByTestId } = render(
+      <ImmersiveFeedProvider items={items} initiallyMuted>
+        <Probe />
+      </ImmersiveFeedProvider>,
+    );
+    // Default state: muted.
+    expect(getByTestId("muted").textContent).toBe("true");
+    act(() => {
+      getByTestId("btn-open-b").click();
+    });
+    // After open(), muted is false so the video plays with sound.
+    expect(getByTestId("muted").textContent).toBe("false");
+  });
+
   it("open(index) also works", () => {
     const { getByTestId } = render(
       <ImmersiveFeedProvider items={items}>

@@ -127,6 +127,11 @@ export const ImmersiveFeedProvider = React.forwardRef<
     if (i < 0) return;
     setActiveIndex(i);
     setIsOpen(true);
+    // open() is always invoked from a user gesture (thumbnail click, Enter
+    // key, etc.), which satisfies browser autoplay-with-sound policies.
+    // Start unmuted so the takeover viewer plays with sound on tap. Consumers
+    // who want silent-by-default can call setMuted(true) inside onOpen.
+    setIsMutedState(false);
     onOpenRef.current?.(list[i]!);
   }, []);
 
