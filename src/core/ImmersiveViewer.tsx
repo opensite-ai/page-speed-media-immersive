@@ -174,19 +174,9 @@ export function ImmersiveViewer({
     }
   }, [activeIndex, isOpen, items, reportAutoplayBlocked]);
 
-  // Keyboard controls. Signature mirrors @page-speed/lightbox's
-  // useKeyboardShortcuts for cross-library consistency.
-  const togglePlayPause = useCallback(() => {
-    const el = videoRefs.current.get(activeIndex);
-    if (!el) return;
-    if (el.paused) {
-      el.play().catch(() => {
-        if (activeItem) reportAutoplayBlocked(activeItem);
-      });
-    } else {
-      el.pause();
-    }
-  }, [activeIndex, activeItem, reportAutoplayBlocked]);
+  // togglePlayPauseActive is declared below alongside the click handler; the
+  // spacebar shortcut reads from a ref to keep the deps list stable.
+  const togglePlayPauseActiveRef = useRef<() => void>(() => {});
 
   useKeyboardShortcuts(
     {
@@ -212,7 +202,7 @@ export function ImmersiveViewer({
       },
       " ": (e) => {
         e.preventDefault();
-        togglePlayPause();
+        togglePlayPauseActiveRef.current();
       },
       m: (e) => {
         e.preventDefault();
@@ -267,13 +257,34 @@ export function ImmersiveViewer({
     [activeIndex, next, total],
   );
 
-  // Tap on video area toggles play/pause. Ignore taps that are part of a drag gesture.
+  // Tap on video area toggles play/pause. Ignore taps that are part of a drag
+  // gesture (measured against the same 6px threshold below). We track
+  // pointerdown position on the *video element itself* rather than the outer
+  // section so ancestor click handlers, pager gesture logic, or other pages
+  // in the render window cannot see or react to the tap.
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
-  const handlePagePointerDown = useCallback((e: React.PointerEvent) => {
+  const handleVideoPointerDown = useCallback((e: React.PointerEvent) => {
     dragStartRef.current = { x: e.clientX, y: e.clientY };
   }, []);
-  const handlePageClick = useCallback(
+  const togglePlayPauseActive = useCallback(() => {
+    const el = videoRefs.current.get(activeIndex);
+    if (!el) return;
+    if (el.paused) {
+      el.play().catch(() => {
+        if (activeItem) reportAutoplayBlocked(activeItem);
+      });
+    } else {
+      el.pause();
+    }
+  }, [activeIndex, activeItem, reportAutoplayBlocked]);
+  // Keep the keyboard-shortcut ref pointing at the latest instance.
+  togglePlayPauseActiveRef.current = togglePlayPauseActive;
+  const handleVideoClick = useCallback(
     (e: React.MouseEvent) => {
+      // Prevent the click from bubbling to the pager container or reaching
+      // any nested chrome (actions rail, caption, etc.). Only the video body
+      // itself should ever trigger a play/pause toggle.
+      e.stopPropagation();
       const start = dragStartRef.current;
       dragStartRef.current = null;
       if (start) {
@@ -281,18 +292,9 @@ export function ImmersiveViewer({
         const dy = Math.abs(e.clientY - start.y);
         if (dx > 6 || dy > 6) return; // Was a drag, not a tap.
       }
-      // Only handle taps on the video area itself, not chrome (buttons stop propagation).
-      const el = videoRefs.current.get(activeIndex);
-      if (!el) return;
-      if (el.paused) {
-        el.play().catch(() => {
-          if (activeItem) reportAutoplayBlocked(activeItem);
-        });
-      } else {
-        el.pause();
-      }
+      togglePlayPauseActive();
     },
-    [activeIndex, activeItem, reportAutoplayBlocked],
+    [togglePlayPauseActive],
   );
 
   // Determine which pages to render (virtualization window).
@@ -358,8 +360,6 @@ export function ImmersiveViewer({
                   key={item.id}
                   aria-hidden={!isActive}
                   data-psmi-index={idx}
-                  onPointerDown={handlePagePointerDown}
-                  onClick={handlePageClick}
                   style={{
                     position: "absolute",
                     top: `${idx * 100}dvh`,
@@ -435,12 +435,46 @@ export function ImmersiveViewer({
                           "linear-gradient(180deg,rgba(5,7,13,0.5) 0%,rgba(5,7,13,0) 22%,rgba(5,7,13,0) 55%,rgba(5,7,13,0.72) 100%)",
                       }}
                     />
-                    {/* Badge (top-left, inside the 9:16 viewport) */}
+                    {/*
+                      Click/tap target overlay.
+                      Sits above the <Video>, below the actions rail, caption,
+                      and header (those have higher zIndex). Only the ACTIVE
+                      page gets an interactive overlay — inactive pages ignore
+                      clicks so they can never accidentally toggle a hidden
+                      video or interfere with page navigation. Placed inside
+                      the viewport (not the outer section) so the pager's
+                      gesture container sees no click events from this layer,
+                      guaranteeing a click can never be interpreted as a
+                      pager commit.
+                    */}
+                    {isActive && (
+                      <div
+                        aria-hidden="true"
+                        onPointerDown={handleVideoPointerDown}
+                        onClick={handleVideoClick}
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          zIndex: 1,
+                          cursor: "pointer",
+                          background: "transparent",
+                        }}
+                      />
+                    )}
+                    {/*
+                      Badge (top-left, inside the 9:16 viewport).
+                      Aligned to the same 16px inset as the caption/left rail
+                      so the top and left gutters match visually. The top
+                      chrome (close button, mute pill) lives *outside* the
+                      9:16 viewport on wide viewports (letterboxed) or
+                      overlaps at higher zIndex on mobile, so the badge does
+                      not collide with it.
+                    */}
                     {item.badge ? (
                       <div
                         style={{
                           position: "absolute",
-                          top: 60,
+                          top: 16,
                           left: 16,
                           display: "inline-flex",
                           alignItems: "center",
@@ -451,6 +485,7 @@ export function ImmersiveViewer({
                           backdropFilter: "blur(6px)",
                           WebkitBackdropFilter: "blur(6px)",
                           zIndex: 2,
+                          pointerEvents: "none",
                         }}
                       >
                         <span
@@ -523,6 +558,42 @@ export function ImmersiveViewer({
                             transition: isDragging ? "none" : "width 120ms linear",
                           }}
                         />
+                      </div>
+                    )}
+
+                    {/*
+                      Media counter ("3 / 7") — bottom-right of the viewport,
+                      above the progress bar. Hidden on narrow (mobile)
+                      viewports via `.psmi-counter` in the scoped stylesheet:
+                      on phones the position indicator is redundant with the
+                      swipe hint and eats vertical caption space.
+                    */}
+                    {isActive && total > 1 && (
+                      <div
+                        className="psmi-counter"
+                        aria-live="polite"
+                        style={{
+                          position: "absolute",
+                          right: 12,
+                          bottom: 14,
+                          zIndex: 2,
+                          padding: "3px 10px",
+                          borderRadius: 999,
+                          background: "rgba(8,12,24,0.55)",
+                          backdropFilter: "blur(6px)",
+                          WebkitBackdropFilter: "blur(6px)",
+                          color: "var(--psmi-chrome-fg, #fff)",
+                          fontSize: 11,
+                          fontWeight: 600,
+                          letterSpacing: "0.02em",
+                          pointerEvents: "none",
+                        }}
+                      >
+                        {activeIndex + 1}
+                        <span style={{ color: "rgba(255,255,255,0.55)" }}>
+                          {" / "}
+                          {total}
+                        </span>
                       </div>
                     )}
                   </div>

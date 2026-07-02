@@ -86,20 +86,13 @@ export function ImmersiveViewerHeader({
         </svg>
       </button>
 
-      <div
-        aria-live="polite"
-        style={{
-          flex: 1,
-          textAlign: "center",
-          fontSize: 13,
-          fontWeight: 600,
-          color: "var(--psmi-chrome-fg, #fff)",
-          letterSpacing: "0.02em",
-          textShadow: "0 1px 4px rgba(0,0,0,0.35)",
-        }}
-      >
-        {activeIndex1Based} <span style={{ color: "rgba(255,255,255,0.5)" }}>/ {total}</span>
-      </div>
+      {/*
+        Spacer only — the media counter ("3 / 7") is rendered separately at
+        the bottom-right of the video viewport (see <ImmersiveViewer>), where
+        it stays legible against varying video backgrounds and hides on
+        mobile via the .psmi-counter media query in the scoped stylesheet.
+      */}
+      <div style={{ flex: 1 }} />
 
       <button
         type="button"
