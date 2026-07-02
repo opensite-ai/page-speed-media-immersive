@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.5] - 2026-07-02
+
+### Fixed
+- **Header mute label was action-oriented and confusing.** The label used
+  to describe what the button would do if clicked ("Muted" = click to
+  mute) rather than the current state. Users read it as state and got
+  confused when the label and the audio disagreed. Now:
+  - `aria-label="Muted"` + `aria-pressed="true"` when audio is OFF
+  - `aria-label="Sound on"` + `aria-pressed="false"` when audio is ON
+
+  Matches the convention on TikTok / Reels / Shorts. `aria-pressed` now
+  correctly encodes whether the mute FEATURE is engaged.
+
+- **Header now reflects the actual DOM `.muted` state, not the provider's
+  intent.** Browsers can refuse to honor a programmatic `.muted = false`
+  (Media Engagement Index below threshold, no prior activation on the
+  domain, etc.). Previously the provider's `isMuted` intent drove the
+  label, so the button could read "Sound on" while the video was
+  actually silent — or vice versa — depending on how the browser
+  responded that render.
+
+  Added an `effectiveMuted` state driven by:
+  - A `volumechange` DOM event listener on the active video (fires when
+    `.muted` changes for any reason including browser policy override).
+  - A `playing` event listener as a redundant sync point.
+  - Immediate readback on activeIndex / videoAttachTick change.
+
+  The header receives `effectiveMuted`, so the label always matches
+  what the user actually hears.
+
+- **Mute button click is now imperative and immediate.** Previously the
+  mute-sync effect could take a few frames to propagate `isMuted` to
+  the DOM (waited for a `playing` event). Now the button click flips
+  `el.muted` synchronously and re-reads it into `effectiveMuted`, so
+  the label updates in the same frame as the click. If the browser
+  refuses the unmute, `effectiveMuted` reverts on the next
+  `volumechange` and the label flips back honestly.
+
+### Known limitation
+- Browsers may reject an unmute request without any error. The user
+  clicks "Sound on", audio stays silent, label flips back to "Muted"
+  after `volumechange` fires. This is Chrome/Safari autoplay policy
+  and cannot be fully worked around from the library. In v0.4 we will
+  add an `onUnmuteBlocked` callback so consumers can render a "tap the
+  video to unmute" hint when this happens.
+
 ## [0.3.4] - 2026-07-02
 
 ### Fixed
