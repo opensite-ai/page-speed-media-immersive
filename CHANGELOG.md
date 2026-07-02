@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-07-02
+
+### Fixed
+- **THE autoplay bug (three prior releases missed it).** Live inspection
+  of the deployed v0.3.3 bundle on production surfaced the actual race:
+  the play effect calls `videoRefs.current.get(activeIndex)` synchronously
+  on run, but on first `open()` the wrapped `<Video>` component's inner
+  `<video>` element has NOT yet fired its callback-ref. So `.get()` returns
+  `undefined`, the immediate + rAF play attempts bail early, and the
+  `canplay` / `loadedmetadata` retry listeners are never even attached
+  (they're conditionally attached to `el` at effect-run time). All three
+  safety nets miss, and the video sits paused forever until a fresh user
+  gesture (click on the video body) triggers `.play()` directly.
+
+  Fix: introduce a `videoAttachTick` state counter that is bumped every
+  time a `<video>` element identity changes at any index. Include it in
+  the play effect's deps AND the mute-sync effect's deps. Result: the
+  moment the wrapped `<Video>` commits its ref, both effects re-run,
+  find the freshly-attached element, and attach the safety-net event
+  listeners — which then fire on `canplay` / `loadedmetadata` and
+  successfully call `.play()`.
+
+  Also: the play effect now prunes stale `videoRefs` entries whose
+  element is no longer in the DOM (`el.isConnected === false`) so the
+  map doesn't accumulate references to unmounted elements when the
+  render window shifts on swipe. Ref cleanup is intentionally lazy
+  (the callback-ref path can't do it without triggering a max-update-
+  depth React error).
+
 ## [0.3.3] - 2026-07-02
 
 ### Fixed

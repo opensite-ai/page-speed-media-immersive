@@ -105,6 +105,12 @@ export function ImmersiveViewer({
   const [progress, setProgress] = useState(0); // 0..1
   const [swipeHintDismissed, setSwipeHintDismissed] = useState(false);
   const videoRefs = useRef<Map<number, HTMLVideoElement>>(new Map());
+  // Monotonically increasing counter bumped every time a <video> element
+  // callback-ref fires with a non-null element. The play effect below
+  // reads this in its deps so it re-runs whenever a new video is
+  // attached to the DOM — solving the race where the effect runs BEFORE
+  // the wrapped <Video> component's inner element has been committed.
+  const [videoAttachTick, setVideoAttachTick] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
   const previouslyFocusedRef = useRef<Element | null>(null);
   const [supportsReducedMotion, setSupportsReducedMotion] = useState(false);
@@ -185,8 +191,16 @@ export function ImmersiveViewer({
   useEffect(() => {
     if (!isOpen) return;
     let cancelled = false;
-    // Pause every non-active video and rewind it.
+    // Pause every non-active video and rewind it. Elements are only
+    // pruned lazily (we can't do it in the callback-ref cleanup path
+    // without hitting the infinite-update loop described near the ref
+    // definition), so also drop entries whose element is no longer in
+    // the DOM to keep the map from accumulating stale references.
     for (const [idx, el] of videoRefs.current.entries()) {
+      if (!el.isConnected) {
+        videoRefs.current.delete(idx);
+        continue;
+      }
       if (idx !== activeIndex) {
         el.pause();
         try {
@@ -242,7 +256,15 @@ export function ImmersiveViewer({
         el.removeEventListener("loadedmetadata", onReadyForPlay);
       }
     };
-  }, [activeIndex, isOpen, items, reportAutoplayBlocked]);
+    // videoAttachTick is in the deps so the effect re-runs the moment a
+    // freshly-mounted <video> is attached to videoRefs. Without this, the
+    // very first open() can miss the window: the effect fires before the
+    // wrapped <Video>'s inner element callback-ref has been committed, so
+    // videoRefs.current.get(activeIndex) returns undefined and neither the
+    // immediate attempt, the rAF attempt, nor the canplay/loadedmetadata
+    // listeners land — the video sits paused forever.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeIndex, isOpen, items, reportAutoplayBlocked, videoAttachTick]);
 
   // Mute-sync effect: attach a `playing` listener to the active video so
   // that when the browser confirms real playback (which grants media-
@@ -275,7 +297,11 @@ export function ImmersiveViewer({
     return () => {
       el.removeEventListener("playing", syncMuted);
     };
-  }, [isMuted, activeIndex, isOpen]);
+    // videoAttachTick in deps so this effect ALSO re-runs when the active
+    // video is (re-)attached to the DOM — same reasoning as the play
+    // effect above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMuted, activeIndex, isOpen, videoAttachTick]);
 
   // togglePlayPauseActive is declared below alongside the click handler; the
   // spacebar shortcut reads from a ref to keep the deps list stable.
@@ -520,8 +546,21 @@ export function ImmersiveViewer({
                       onEnded={handleEnded(idx)}
                       onTimeUpdate={handleTimeUpdate(idx)}
                       ref={(el: HTMLVideoElement | null) => {
-                        if (el) videoRefs.current.set(idx, el);
-                        else videoRefs.current.delete(idx);
+                        // React re-invokes inline callback refs on every
+                        // render (destroy-with-null, then attach-with-el).
+                        // We intentionally do NOT delete on null — that
+                        // path fires between every commit even when the
+                        // element is unchanged. The map is only cleaned
+                        // up when the section actually leaves the render
+                        // window (unmount runs its own null cleanup that
+                        // we compare below).
+                        if (!el) return;
+                        const prev = videoRefs.current.get(idx);
+                        if (prev === el) return;
+                        videoRefs.current.set(idx, el);
+                        // Element identity changed — a new <video> was
+                        // attached at this index. Notify the play effect.
+                        setVideoAttachTick((n) => n + 1);
                       }}
                       style={{
                         position: "absolute",
