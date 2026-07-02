@@ -187,6 +187,14 @@ export function ImmersiveViewer({
   const isMutedRef = useRef(isMuted);
   isMutedRef.current = isMuted;
 
+  // Effective muted = the DOM element's actual .muted value, not just the
+  // provider's intent. When the browser rejects an unmute (media-engagement-
+  // index below threshold, no prior user activation on the domain, etc.),
+  // the provider says isMuted=false but the video is still audibly silent.
+  // Showing the wrong state in the header confuses users. This state tracks
+  // what the browser is actually doing so the header label matches reality.
+  const [effectiveMuted, setEffectiveMuted] = useState(isMuted);
+
   // Play effect: fires on open + on every activeIndex change.
   useEffect(() => {
     if (!isOpen) return;
@@ -302,6 +310,31 @@ export function ImmersiveViewer({
     // effect above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMuted, activeIndex, isOpen, videoAttachTick]);
+
+  // Track the ACTUAL DOM .muted state of the active video and expose it as
+  // effectiveMuted for the header. Fires on:
+  //   - volumechange: the canonical event when .muted flips (either from
+  //     our code, from browser policy, or from the user pressing OS keys).
+  //   - playing: covers the initial-play case where volumechange may not
+  //     fire cleanly on some browsers.
+  //   - activeIndex change: syncs when the active video swaps out from
+  //     under us.
+  useEffect(() => {
+    if (!isOpen) return;
+    const el = videoRefs.current.get(activeIndex);
+    if (!el) return;
+    const sync = () => setEffectiveMuted(el.muted);
+    // Initial read — the play/mute-sync effects may have already flipped
+    // the flag before we got here.
+    sync();
+    el.addEventListener("volumechange", sync);
+    el.addEventListener("playing", sync);
+    return () => {
+      el.removeEventListener("volumechange", sync);
+      el.removeEventListener("playing", sync);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeIndex, isOpen, videoAttachTick]);
 
   // togglePlayPauseActive is declared below alongside the click handler; the
   // spacebar shortcut reads from a ref to keep the deps list stable.
@@ -750,22 +783,54 @@ export function ImmersiveViewer({
           </div>
         </div>
 
-        {/* Header (top chrome) */}
+        {/*
+          Header (top chrome).
+          We pass `effectiveMuted` (the DOM element's real .muted state)
+          rather than the provider's isMuted intent, so the label matches
+          what the user actually hears — even if the browser overrode our
+          requested state (e.g. rejected an unmute for policy reasons).
+
+          onToggleMute uses effectiveMuted as its source of truth too, so
+          clicking the button reliably flips whatever the current audio
+          state actually is, not what the provider thinks it should be.
+        */}
         {renderHeader
           ? renderHeader({
               activeIndex1Based: activeIndex + 1,
               total,
-              muted: isMuted,
+              muted: effectiveMuted,
               onClose: close,
-              onToggleMute: () => setMuted((m) => !m),
+              onToggleMute: () => {
+                const target = !effectiveMuted;
+                setMuted(target);
+                // Also flip the DOM immediately in case the mute-sync effect
+                // is waiting for a `playing` event that isn't imminent.
+                const el = videoRefs.current.get(activeIndex);
+                if (el) {
+                  el.muted = target;
+                  if (target) el.setAttribute("muted", "");
+                  else el.removeAttribute("muted");
+                  setEffectiveMuted(el.muted);
+                }
+              },
             })
           : (
             <ImmersiveViewerHeader
               activeIndex1Based={activeIndex + 1}
               total={total}
-              muted={isMuted}
+              muted={effectiveMuted}
               onClose={close}
-              onToggleMute={() => setMuted((m) => !m)}
+              onToggleMute={() => {
+                const target = !effectiveMuted;
+                setMuted(target);
+                const el = videoRefs.current.get(activeIndex);
+                if (el) {
+                  el.muted = target;
+                  if (target) el.setAttribute("muted", "");
+                  else el.removeAttribute("muted");
+                  setEffectiveMuted(el.muted);
+                }
+              }}
               labels={labels}
             />
           )}

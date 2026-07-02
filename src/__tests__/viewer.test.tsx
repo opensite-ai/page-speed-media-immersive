@@ -118,6 +118,26 @@ describe("<ImmersiveViewer> integration", () => {
     expect(counter.textContent).toContain("2");
   });
 
+  it("header label is state-oriented: reads 'Muted' when video is muted", () => {
+    // Regression against pre-v0.3.5 confusion where the label described the
+    // action ("click to mute") instead of the state. Users read the label
+    // as the state and got confused when it said 'Muted' but audio was on.
+    //
+    // The <Video> element mounts muted at DOM level (see the play effect),
+    // so on initial render before any playing event fires, effectiveMuted
+    // should be true and the label should read 'Muted'.
+    render(<ImmersiveFeed items={items} initiallyOpen initiallyMuted={false} />);
+    const dialog = document.querySelector('[role="dialog"]')!;
+    const muteBtn = dialog.querySelector('button[aria-label="Muted"], button[aria-label="Sound on"]') as HTMLButtonElement;
+    expect(muteBtn).toBeTruthy();
+    // Initial DOM .muted is true (see mount-muted test above), so the
+    // button label should reflect that reality — not the provider's
+    // isMuted=false intent.
+    expect(muteBtn.getAttribute("aria-label")).toBe("Muted");
+    // And aria-pressed reflects that the mute FEATURE is engaged.
+    expect(muteBtn.getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("invokes play() on the active video after mount (ref-timing regression)", async () => {
     // Regression test for the v0.3.3 bug: the play effect ran before the
     // wrapped <Video> component's inner element had its callback ref

@@ -26,6 +26,12 @@ export interface ImmersiveViewerHeaderProps {
 
 const DEFAULT_LABELS = {
   close: "Close",
+  // Labels are STATE-oriented, not action-oriented, so what the user
+  // reads matches what they hear:
+  //   soundOn  = audio is currently ON  (button shows a speaker — click to mute)
+  //   muted    = audio is currently OFF (button shows a muted speaker — click to unmute)
+  // This mirrors TikTok / Reels / Shorts and eliminates the pre-v0.3.5
+  // confusion where the label read as the ACTION the button would take.
   soundOn: "Sound on",
   muted: "Muted",
 };
@@ -97,8 +103,12 @@ export function ImmersiveViewerHeader({
       <button
         type="button"
         onClick={onToggleMute}
-        aria-label={muted ? L.soundOn : L.muted}
-        aria-pressed={!muted}
+        // State-oriented labeling: label reflects the CURRENT audio state.
+        // muted=true  → aria-label="Muted"   (audio is off)
+        // muted=false → aria-label="Sound on" (audio is on)
+        // aria-pressed reflects whether the mute FEATURE is engaged.
+        aria-label={muted ? L.muted : L.soundOn}
+        aria-pressed={muted}
         style={{
           pointerEvents: "auto",
           display: "flex",
@@ -140,7 +150,7 @@ export function ImmersiveViewerHeader({
             </svg>
           )}
         </span>
-        <span style={{ fontSize: 12, fontWeight: 600 }}>{muted ? L.soundOn : L.muted}</span>
+        <span style={{ fontSize: 12, fontWeight: 600 }}>{muted ? L.muted : L.soundOn}</span>
       </button>
     </div>
   );
