@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.6] - 2026-07-02
+
+### Fixed
+- **Videos randomly went silent while playing (and stayed silent).** The
+  play effect — which re-runs whenever its dependencies change, including
+  the `items` array identity — unconditionally forced the active video's
+  `.muted = true` before calling `.play()`. When the video was *already
+  playing* audibly, that force-mute silenced it permanently: an
+  already-playing element never fires another `playing` event, so the
+  mute-sync listener (the only thing that restores the consumer's unmuted
+  intent) never ran again, and the mute-sync effect itself has no `items`
+  dependency so it did not re-run either.
+
+  Any consumer that rebuilds its `items` array per render (e.g. a
+  dashboard re-rendering on every SSE event, or selectors that construct
+  fresh `MediaItem` objects each call) hit this on a random cadence —
+  audio died whenever a re-render landed while the takeover was open.
+
+  `attemptPlay` now returns early when the element is not paused: an
+  already-playing (or play-in-flight) video is never touched, so
+  consumer re-renders, `items` identity churn, and `videoAttachTick`
+  bumps from neighbouring pages mounting are all safe while audio is
+  live. Regression-tested in `viewer.test.tsx` and verified in Chrome
+  against an 800ms items-identity churn harness.
+
 ## [0.3.5] - 2026-07-02
 
 ### Fixed

@@ -222,6 +222,16 @@ export function ImmersiveViewer({
       if (cancelled) return;
       const el = videoRefs.current.get(activeIndex);
       if (!el) return;
+      // If the element is already playing (or a play() call is in flight —
+      // .paused flips false synchronously), there is nothing to start.
+      // Crucially, we must NOT force .muted = true here: an already-playing
+      // element never fires another `playing` event, so the mute-sync
+      // listener would never run again and the force-mute would stick —
+      // silencing live audio. This guard is what makes re-runs of this
+      // effect (items identity changes from consumer re-renders, or
+      // videoAttachTick bumps from neighbouring pages mounting) safe
+      // while audio is on.
+      if (!el.paused) return;
       // Belt-and-suspenders: JSX renders <video muted> but React sets DOM
       // property .muted only on mount, and browsers consult BOTH the
       // property AND the HTML attribute when applying autoplay policy.

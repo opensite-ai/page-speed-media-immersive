@@ -138,6 +138,47 @@ describe("<ImmersiveViewer> integration", () => {
     expect(muteBtn.getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("does not re-mute a playing video when items identity changes (SSE re-render regression)", () => {
+    // Regression test for the v0.3.5 "randomly muted" bug: consumers whose
+    // items arrays are rebuilt per render (e.g. a dashboard re-rendering on
+    // every SSE event) caused the play effect — which has `items` in its
+    // deps — to re-run while the active video was already PLAYING. The
+    // effect unconditionally forced element.muted = true before calling
+    // play(). Because an already-playing element never fires another
+    // `playing` event, the unmute listener never fired again, and the
+    // mute-sync effect (no `items` dep) never re-ran: audio died and
+    // stayed dead until a manual toggle.
+    const freshItems = (): MediaItem[] =>
+      items.map((it) => ({ ...it }));
+
+    const { rerender } = render(
+      <ImmersiveFeed items={freshItems()} initiallyOpen initiallyMuted={false} />,
+    );
+    const dialog = document.querySelector('[role="dialog"]')!;
+    const video = dialog.querySelector("video") as HTMLVideoElement;
+    expect(video).toBeTruthy();
+
+    // Simulate the browser having started real playback: paused=false and
+    // a `playing` event. The mute-sync listener flips muted to the
+    // consumer intent (false) at this moment — audio is now ON.
+    Object.defineProperty(video, "paused", { configurable: true, get: () => false });
+    Object.defineProperty(video, "readyState", { configurable: true, get: () => 4 });
+    act(() => {
+      video.dispatchEvent(new Event("playing"));
+    });
+    expect(video.muted).toBe(false);
+
+    // Consumer re-renders with a NEW items array identity (same data) —
+    // the SSE-driven dashboard pattern. The play effect re-runs; it must
+    // NOT touch a video that is already playing.
+    act(() => {
+      rerender(
+        <ImmersiveFeed items={freshItems()} initiallyOpen initiallyMuted={false} />,
+      );
+    });
+    expect(video.muted).toBe(false);
+  });
+
   it("invokes play() on the active video after mount (ref-timing regression)", async () => {
     // Regression test for the v0.3.3 bug: the play effect ran before the
     // wrapped <Video> component's inner element had its callback ref
