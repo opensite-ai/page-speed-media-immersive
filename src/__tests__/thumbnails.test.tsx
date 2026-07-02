@@ -7,6 +7,9 @@ import { ImmersiveFeedProvider } from "../core/ImmersiveFeedProvider.js";
 import type { MediaItem } from "../types/index.js";
 
 const items: MediaItem[] = [
+  // `src` is omitted so tests default to the poster branch (no <video>
+  // preview) — keeps the assertions focused on chrome. The preview branch
+  // is covered separately below.
   { id: "a", poster: "/a.jpg", title: "First", badge: "INTRO", durationMs: 92000 },
   { id: "b", poster: "/b.jpg", title: "Second", badge: "TOUR", durationMs: 64000 },
 ];
@@ -34,19 +37,91 @@ describe("<ThumbnailCard>", () => {
     expect(onOpen).toHaveBeenCalledWith("a");
   });
 
-  it("honors hideCaption and hideMutedIcon flags", () => {
+  it("honors hideCaption flag", () => {
     const { container } = render(
-      <ThumbnailCard
-        item={items[0]!}
-        onOpen={() => {}}
-        hideCaption
-        hideMutedIcon
-      />,
+      <ThumbnailCard item={items[0]!} onOpen={() => {}} hideCaption />,
     );
     expect(container.textContent).not.toContain("First");
     expect(container.textContent).not.toContain("1:32");
   });
+
+  it("hides the muted-speaker icon by default in v0.2+", () => {
+    const { container } = render(
+      <ThumbnailCard item={items[0]!} onOpen={() => {}} />,
+    );
+    // The icon is a <svg> with a speaker-shape path. Zero <svg>s in the
+    // top-right region means the icon is hidden.
+    const svgs = container.querySelectorAll("svg");
+    // There's still the play-button svg; the mute svg would be a second one.
+    // Fall back to a text check on the aria-label — the icon wraps in a
+    // <span aria-hidden> so no text ever appears, but the DOM SVG count
+    // between hidden and shown differs by exactly one.
+    const withIcon = renderCount(true);
+    const withoutIcon = renderCount(false);
+    expect(svgs.length).toBe(withoutIcon);
+    expect(withoutIcon).toBeLessThan(withIcon);
+  });
+
+  it("shows the muted-speaker icon when `showMutedIcon` is true", () => {
+    const { container } = render(
+      <ThumbnailCard
+        item={items[0]!}
+        onOpen={() => {}}
+        showMutedIcon
+      />,
+    );
+    expect(container.querySelectorAll("svg").length).toBe(renderCount(true));
+  });
+
+  it("honors legacy `hideMutedIcon={false}` to show the icon", () => {
+    const { container } = render(
+      <ThumbnailCard
+        item={items[0]!}
+        onOpen={() => {}}
+        hideMutedIcon={false}
+      />,
+    );
+    expect(container.querySelectorAll("svg").length).toBe(renderCount(true));
+  });
+
+  it("renders a <video> preview when the item has a video source", () => {
+    const withSrc: MediaItem = {
+      ...items[0]!,
+      src: "/a.mp4",
+    };
+    const { container } = render(
+      <ThumbnailCard item={withSrc} onOpen={() => {}} />,
+    );
+    // happy-dom exposes video elements; verify one is present.
+    expect(container.querySelector("video")).not.toBeNull();
+    // No <img> should render alongside — the preview branch replaces it.
+    expect(container.querySelectorAll("img").length).toBe(0);
+  });
+
+  it("falls back to poster <img> when autoplayPreview is disabled", () => {
+    const withSrc: MediaItem = {
+      ...items[0]!,
+      src: "/a.mp4",
+    };
+    const { container } = render(
+      <ThumbnailCard
+        item={withSrc}
+        onOpen={() => {}}
+        autoplayPreview={false}
+      />,
+    );
+    expect(container.querySelector("video")).toBeNull();
+    expect(container.querySelector("img")).not.toBeNull();
+  });
 });
+
+// Helper: count expected <svg> elements in a rendered ThumbnailCard
+// depending on whether the mute icon is drawn. Kept in sync with
+// ThumbnailCard's SVG usage: badge dot (0 svgs; just a colored span),
+// play button (1 svg), optional mute icon (1 svg).
+function renderCount(iconShown: boolean): number {
+  return iconShown ? 2 : 1;
+}
 
 describe("<ThumbnailStrip>", () => {
   it("renders cards from the surrounding provider", () => {
