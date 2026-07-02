@@ -60,6 +60,35 @@ const SCOPED_CSS = `
 @media (hover: none), (max-width: 540px) {
   [data-psmi-scope="root"] .psmi-chevrons { display: none !important; }
 }
+/* Mobile: the mute pill collapses to an icon-only circle so it never covers
+   video content. !important because padding is also set inline (the inline
+   value is the desktop layout; layout-critical styles are inline per the
+   library's stylesheet-optional rule). */
+@media (max-width: 540px) {
+  [data-psmi-scope="root"] .psmi-mute-label { display: none; }
+  [data-psmi-scope="root"] .psmi-mute-pill { padding: 0 6px !important; }
+}
+/* Badge placement. Desktop: top-left inside the 9:16 viewport (chrome is
+   letterboxed outside it, no collision). Mobile: the close button overlaps
+   that corner, so the badge moves into the caption between the brand row
+   and the title. Exactly one of the two is ever visible. */
+[data-psmi-scope="root"] .psmi-badge-inline { display: none !important; }
+@media (max-width: 540px) {
+  [data-psmi-scope="root"] .psmi-badge-top { display: none !important; }
+  [data-psmi-scope="root"] .psmi-badge-inline { display: inline-flex !important; }
+}
+/* Playback-state indicator. The spinner ring spins; the delayed-show wrap
+   keeps the buffering spinner invisible for the first ~450ms so it never
+   flashes during a normal fast load. */
+[data-psmi-scope="root"] .psmi-spinner { animation: psmi-spin 0.9s linear infinite; }
+[data-psmi-scope="root"] .psmi-delayed-show { opacity: 0; animation: psmi-fadein 0.18s ease 0.45s forwards; }
+/* Paused glyph gets a short 120ms delay: the pager briefly pauses the video
+   during a swipe-back and play() takes a frame or two to resume — without
+   the delay the glyph would flash after every rubber-band. */
+[data-psmi-scope="root"] .psmi-delayed-show-fast { opacity: 0; animation: psmi-fadein 0.15s ease 0.12s forwards; }
+@keyframes psmi-spin {
+  to { transform: rotate(360deg); }
+}
 /* Thumbnail carousel styles (also scoped so they can be applied within a
    consumer page - the thumbnail primitives use data-psmi-scope="strip"). */
 [data-psmi-scope="strip"] .psmi-strip {

@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-07-02
+
+### Fixed
+- **Mobile swipes died and taps toggled play/pause instead of paging.** The
+  pager container used `touch-action: pan-y`, which tells the browser IT may
+  handle vertical pans. On touch devices the browser claimed vertical swipes
+  for (scroll-locked, no-op) scrolling and fired `pointercancel`, killing the
+  pager mid-gesture; users' retry flicks then landed as clicks and toggled
+  playback. The container is a fullscreen modal that owns every touch — it
+  now uses `touch-action: none` (+ `overscroll-behavior: contain`), matching
+  TikTok/Reels behavior.
+- **Quick short flicks rubber-banded instead of committing.** Velocity was
+  measured from the last pointer sample only; fingers decelerate just before
+  lift-off, so flick momentum under-reported. Velocity is now exponentially
+  smoothed across samples.
+
+### Added
+- **Playback-state indicator.** Users couldn't tell a paused video from a
+  buffering one (both were a still frame). The active page now renders a
+  centered TikTok-style overlay: a large play glyph while paused (with a
+  120ms fade-delay so pager-induced micro-pauses never flash it), and a
+  spinner while buffering (450ms fade-delay so it never flashes on fast
+  loads). Nothing renders while playing. Autoplay-blocked videos surface the
+  play glyph as an implicit tap-to-play affordance.
+- **Icon-only mute pill on mobile (≤540px).** The "Sound on"/"Muted" label
+  is desktop-only; on phones the pill collapses to the speaker icon so it
+  can't cover video content. Aria labels unchanged.
+- **Badge placement is responsive.** On phones the close button overlaps the
+  viewport's top-left corner, so the item badge moves into the caption block
+  between the brand row and the title (`.psmi-badge-inline`); the top-left
+  badge (`.psmi-badge-top`) remains desktop-only. Exactly one is visible at
+  a time.
+
+### Changed
+- Tap slop for the play/pause toggle raised from 6px to 10px to match the
+  pager's intent-lock threshold — thumb wobble counts as a tap, anything the
+  pager would treat as a drag never toggles playback.
+
 ## [0.3.6] - 2026-07-02
 
 ### Fixed

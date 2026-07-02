@@ -168,10 +168,16 @@ export function useVerticalPagerGestures(
         effective = dy * rubberBand;
       }
 
-      // Track velocity via last-sample delta (px/ms).
+      // Track velocity in px/ms with exponential smoothing. Fingers
+      // decelerate in the last few milliseconds before lift-off, so the
+      // raw last-sample velocity under-reports flick speed — quick short
+      // TikTok-style flicks were failing the velocity gate and rubber-
+      // banding back instead of committing. Blending keeps the flick's
+      // momentum visible at pointerup.
       const dt = e.timeStamp - p.lastTime;
       if (dt > 0) {
-        p.velocity = (e.clientY - p.lastY) / dt;
+        const instant = (e.clientY - p.lastY) / dt;
+        p.velocity = p.velocity === 0 ? instant : instant * 0.6 + p.velocity * 0.4;
       }
       p.lastY = e.clientY;
       p.lastTime = e.timeStamp;

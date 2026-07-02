@@ -199,7 +199,7 @@ Every subpath is a `.js` file (not a barrel) so bundlers can drop unused entry p
 
 **Not scroll-snap.** Implementation is:
 
-1. Container: `position:fixed; inset:0; overflow:hidden; touch-action: pan-y`.
+1. Container: `position:fixed; inset:0; overflow:hidden; touch-action: none`. (v0.4.0: was `pan-y`, which let mobile browsers claim vertical swipes for scroll-locked no-op scrolling and fire `pointercancel` — killing the pager mid-gesture. The viewer is a fullscreen modal; it owns every touch.)
 2. Inner track: `transform: translate3d(0, -activeIndex * 100dvh, 0); transition: transform 320ms cubic-bezier(0.2, 0.8, 0.3, 1)`.
 3. Render only `activeIndex - 1`, `activeIndex`, `activeIndex + 1` — three at a time. `<Video>` outside this window is unmounted (releases hls.js instance).
 4. Gestures: pointer events (unified for touch/mouse/pen).

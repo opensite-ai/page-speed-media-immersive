@@ -109,6 +109,10 @@ export function ImmersiveViewerHeader({
         // aria-pressed reflects whether the mute FEATURE is engaged.
         aria-label={muted ? L.muted : L.soundOn}
         aria-pressed={muted}
+        // .psmi-mute-pill: collapses to icon-only on narrow viewports (the
+        // .psmi-mute-label span is hidden there) so the pill can't cover
+        // video content. See the scoped stylesheet.
+        className="psmi-mute-pill"
         style={{
           pointerEvents: "auto",
           display: "flex",
@@ -150,7 +154,9 @@ export function ImmersiveViewerHeader({
             </svg>
           )}
         </span>
-        <span style={{ fontSize: 12, fontWeight: 600 }}>{muted ? L.muted : L.soundOn}</span>
+        <span className="psmi-mute-label" style={{ fontSize: 12, fontWeight: 600 }}>
+          {muted ? L.muted : L.soundOn}
+        </span>
       </button>
     </div>
   );

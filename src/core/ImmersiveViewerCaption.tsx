@@ -43,7 +43,7 @@ export function ImmersiveViewerCaption({
       }}
     >
       {(brandName || item.kind) && (
-        <div style={{ display: "inline-flex", alignItems: "center", gap: 7, marginBottom: 9 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 9 }}>
           {brandName ? (
             <>
               <span
@@ -71,6 +71,47 @@ export function ImmersiveViewerCaption({
           ) : null}
         </div>
       )}
+      {/*
+        Inline badge — mobile only (.psmi-badge-inline is display:none on
+        wide viewports; the top-left corner badge shows there instead).
+        Sits between the brand row and the title, matching the annotated
+        design: on phones the top-left corner is occupied by the close
+        button, so this is where the category chip lives.
+      */}
+      {item.badge ? (
+        <div
+          className="psmi-badge-inline"
+          style={{
+            alignItems: "center",
+            gap: 6,
+            padding: "4px 10px",
+            borderRadius: 999,
+            background: "rgba(8,12,24,0.5)",
+            backdropFilter: "blur(6px)",
+            WebkitBackdropFilter: "blur(6px)",
+            marginBottom: 8,
+          }}
+        >
+          <span
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background: "var(--psmi-accent, #f39e1e)",
+            }}
+          />
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: "0.07em",
+              color: "#fff",
+            }}
+          >
+            {item.badge}
+          </span>
+        </div>
+      ) : null}
       <div
         style={{
           fontSize: 19,

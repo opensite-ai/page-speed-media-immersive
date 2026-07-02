@@ -187,6 +187,17 @@ export function ImmersiveViewer({
   const isMutedRef = useRef(isMuted);
   isMutedRef.current = isMuted;
 
+  // Playback-state indicator source of truth. Users could not tell a paused
+  // video from a buffering one (both were just a still frame), so taps that
+  // paused playback read as "the video broke". Tracks the ACTIVE video's
+  // real state via media events; drives the centered glyph/spinner overlay.
+  //   "playing"   → no overlay (TikTok-style)
+  //   "paused"    → large play glyph (tap anywhere resumes)
+  //   "buffering" → spinner, delay-faded so it never flashes on fast loads
+  const [playbackState, setPlaybackState] = useState<
+    "playing" | "paused" | "buffering"
+  >("buffering");
+
   // Effective muted = the DOM element's actual .muted value, not just the
   // provider's intent. When the browser rejects an unmute (media-engagement-
   // index below threshold, no prior user activation on the domain, etc.),
@@ -246,6 +257,10 @@ export function ImmersiveViewer({
           // The canplay/loadedmetadata listeners below will re-attempt.
           const item = items[activeIndex];
           if (item) reportAutoplayBlocked(item);
+          // Surface the blocked state as "paused" so the centered play
+          // glyph renders — a tap-to-play affordance instead of an
+          // indefinite spinner (the video IS paused; a tap starts it).
+          if (!cancelled) setPlaybackState("paused");
         });
       }
     };
@@ -320,6 +335,43 @@ export function ImmersiveViewer({
     // effect above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMuted, activeIndex, isOpen, videoAttachTick]);
+
+  // Playback-state sync effect: listen to the active video's media events
+  // and mirror them into playbackState. Re-runs on active-video swaps
+  // (activeIndex / videoAttachTick) so the listeners always track the
+  // element the user is actually watching.
+  useEffect(() => {
+    if (!isOpen) return;
+    const el = videoRefs.current.get(activeIndex);
+    if (!el) {
+      setPlaybackState("buffering");
+      return;
+    }
+    const sync = () => {
+      if (el.paused) {
+        // currentTime > 0 = genuinely paused mid-video (show the glyph).
+        // currentTime === 0 with low readiness = still spinning up (spinner).
+        setPlaybackState(
+          el.currentTime > 0 && el.readyState >= 2 ? "paused" : "buffering",
+        );
+      } else {
+        setPlaybackState(el.readyState >= 3 ? "playing" : "buffering");
+      }
+    };
+    sync();
+    const onPlaying = () => setPlaybackState("playing");
+    const onWaiting = () => setPlaybackState("buffering");
+    el.addEventListener("playing", onPlaying);
+    el.addEventListener("pause", sync);
+    el.addEventListener("waiting", onWaiting);
+    return () => {
+      el.removeEventListener("playing", onPlaying);
+      el.removeEventListener("pause", sync);
+      el.removeEventListener("waiting", onWaiting);
+    };
+    // videoAttachTick re-binds listeners when the element is (re-)attached.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeIndex, isOpen, videoAttachTick]);
 
   // Track the ACTUAL DOM .muted state of the active video and expose it as
   // effectiveMuted for the header. Fires on:
@@ -462,7 +514,11 @@ export function ImmersiveViewer({
       if (start) {
         const dx = Math.abs(e.clientX - start.x);
         const dy = Math.abs(e.clientY - start.y);
-        if (dx > 6 || dy > 6) return; // Was a drag, not a tap.
+        // 10px matches the pager's intent-lock slop: any movement small
+        // enough that the pager didn't treat it as a drag counts as a tap
+        // (thumbs wobble); anything at or past the pager's threshold never
+        // toggles playback.
+        if (dx > 10 || dy > 10) return; // Was a drag, not a tap.
       }
       togglePlayPauseActive();
     },
@@ -508,7 +564,16 @@ export function ImmersiveViewer({
             position: "absolute",
             inset: 0,
             overflow: "hidden",
-            touchAction: "pan-y",
+            // The viewer is a fullscreen modal and owns EVERY touch gesture.
+            // This must be "none", not "pan-y": pan-y tells the browser IT
+            // may handle vertical pans, so on touch devices the browser
+            // claimed vertical swipes for (scroll-locked, no-op) scrolling
+            // and fired pointercancel — killing the pager mid-gesture.
+            // Users' swipes died, and their retry taps toggled play/pause
+            // instead. With "none" the pointer stream always reaches the
+            // pager engine, matching TikTok/Reels swipe behavior.
+            touchAction: "none",
+            overscrollBehavior: "contain",
             userSelect: "none",
             WebkitUserSelect: "none",
           }}
@@ -652,6 +717,80 @@ export function ImmersiveViewer({
                       />
                     )}
                     {/*
+                      Playback-state indicator (visual only — the tap overlay
+                      above is the interactive surface, so pointerEvents:none
+                      here keeps a single toggle path). Hidden while dragging:
+                      the pager pauses the video mid-swipe and the glyph
+                      would flicker. TikTok-style: nothing while playing, a
+                      large play glyph while paused, a delayed spinner while
+                      buffering so paused ≠ "is it broken?".
+                    */}
+                    {isActive && !isDragging && playbackState === "paused" && (
+                      <div
+                        aria-hidden="true"
+                        className="psmi-delayed-show-fast"
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          zIndex: 2,
+                          pointerEvents: "none",
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: 76,
+                            height: 76,
+                            borderRadius: "50%",
+                            background: "rgba(8,12,24,0.55)",
+                            backdropFilter: "blur(6px)",
+                            WebkitBackdropFilter: "blur(6px)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          <svg
+                            width="34"
+                            height="34"
+                            viewBox="0 0 24 24"
+                            fill="#fff"
+                            style={{ marginLeft: 4 }}
+                          >
+                            <path d="M8 5.5v13l11-6.5z" />
+                          </svg>
+                        </span>
+                      </div>
+                    )}
+                    {isActive && !isDragging && playbackState === "buffering" && (
+                      <div
+                        aria-hidden="true"
+                        className="psmi-delayed-show"
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          zIndex: 2,
+                          pointerEvents: "none",
+                        }}
+                      >
+                        <span
+                          className="psmi-spinner"
+                          style={{
+                            width: 44,
+                            height: 44,
+                            borderRadius: "50%",
+                            border: "3px solid rgba(255,255,255,0.25)",
+                            borderTopColor: "#fff",
+                          }}
+                        />
+                      </div>
+                    )}
+                    {/*
                       Badge (top-left, inside the 9:16 viewport).
                       Aligned to the same 16px inset as the caption/left rail
                       so the top and left gutters match visually. The top
@@ -662,6 +801,11 @@ export function ImmersiveViewer({
                     */}
                     {item.badge ? (
                       <div
+                        // Hidden on mobile (≤540px): the close button owns
+                        // that corner there. The caption renders a
+                        // .psmi-badge-inline twin between the brand row and
+                        // the title instead. See the scoped stylesheet.
+                        className="psmi-badge-top"
                         style={{
                           position: "absolute",
                           top: 16,
