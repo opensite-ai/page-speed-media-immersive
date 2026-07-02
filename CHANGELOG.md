@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-07-01
+
+### Fixed
+- **Autoplay-on-open + mute state desync (v0.3.1 follow-up).** v0.3.1
+  landed the `.then()` pattern for post-play unmute, but the `.then()`
+  never fires when the play() promise resolves *before* the effect
+  finishes running (already-playing element), and it fires unreliably
+  when the browser is still buffering. Result on production: first
+  video stayed paused; second video played but the DOM `.muted` flag
+  drifted out of sync with the provider's `isMuted`.
+
+  Rewrote the play + mute-sync flow to use two decoupled effects:
+  - **Play effect** — fires on `activeIndex`/`isOpen` change. Calls
+    `play()` immediately, and re-attempts on the next animation frame
+    (double-tap, safe for HLS parse latency). Element `.muted` is
+    guaranteed `true` at play time because the JSX prop is hardcoded
+    `muted`, so muted-autoplay policy is always satisfied.
+  - **Mute-sync effect** — attaches a `playing` event listener to the
+    active video. The listener fires the moment the browser confirms
+    real playback, which is when unmute is permitted. It flips DOM
+    `.muted = isMutedRef.current`. Also runs immediately when
+    `isMuted` toggles so header interactions are instant.
+
+  Result: takeover always plays on open, DOM `.muted` and provider
+  `isMuted` stay strictly in sync, and mute toggles never restart
+  playback.
+
+### Added
+- **Desktop up/down chevron pager.** A pair of circular buttons on the
+  right side of the viewer that page prev/next with a mouse click.
+  Disabled at the ends of the list. Hidden on touch-only devices
+  (`hover: none`) and phones (`max-width: 540px`) via the `.psmi-
+  chevrons` scoped rule so mobile continues to swipe. Works alongside
+  the existing arrow-key and mouse-wheel navigation.
+
+## [0.3.1] - 2026-07-01
+
+### Fixed
+- **Autoplay-on-open regression.** In v0.3.0 the provider set `isMuted =
+  false` on `open()` so the takeover viewer would play with sound. That
+  in turn caused `<video muted={false}>` to render, and the follow-up
+  `.play()` in the viewer's effect was rejected with `NotAllowedError`
+  because the user gesture had already been consumed by the thumbnail
+  click and the `<video>` element hadn't participated in it. The viewer
+  sat paused on open.
+
+  The `<video>` element now always mounts with `muted={true}` (which is
+  unconditionally allowed to autoplay). The play/unmute effect starts
+  playback muted, then imperatively flips `element.muted =
+  isMutedRef.current` after `play()` resolves — the media session
+  inherits the tab's activation and allows the unmute without a fresh
+  gesture. Consumer state (`isMuted`) is unchanged; only the DOM
+  element's muted attribute is briefly forced true.
+
+  A separate mute-sync effect keeps the DOM in step with `isMuted` when
+  the user toggles the header button after the initial play, without
+  restarting playback.
+
 ## [0.3.0] - 2026-07-01
 
 ### Fixed

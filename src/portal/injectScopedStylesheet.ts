@@ -55,6 +55,11 @@ const SCOPED_CSS = `
 @media (max-width: 540px) {
   [data-psmi-scope="root"] .psmi-counter { display: none; }
 }
+/* Desktop-only up/down chevron pager. Touch devices swipe instead — the
+   chevrons would just consume space and steal the tap target. */
+@media (hover: none), (max-width: 540px) {
+  [data-psmi-scope="root"] .psmi-chevrons { display: none !important; }
+}
 /* Thumbnail carousel styles (also scoped so they can be applied within a
    consumer page - the thumbnail primitives use data-psmi-scope="strip"). */
 [data-psmi-scope="strip"] .psmi-strip {

@@ -74,4 +74,47 @@ describe("<ImmersiveViewer> integration", () => {
     expect(badge.style.top).toBe("16px");
     expect(badge.style.left).toBe("16px");
   });
+
+  it("mounts the video element with the muted attribute regardless of provider muted state", () => {
+    // Provider says isMuted=false, but the DOM <video> must still be muted
+    // at mount time so muted autoplay is guaranteed. The play/unmute effect
+    // flips element.muted = false imperatively after play() resolves.
+    render(<ImmersiveFeed items={items} initiallyOpen initiallyMuted={false} />);
+    const dialog = document.querySelector('[role="dialog"]')!;
+    const video = dialog.querySelector("video") as HTMLVideoElement | null;
+    expect(video).not.toBeNull();
+    // The `muted` boolean prop must be true on the initial render.
+    expect(video!.muted).toBe(true);
+  });
+
+  it("renders the desktop chevron pager with prev disabled on the first item", () => {
+    render(<ImmersiveFeed items={items} initiallyOpen initialIndex={0} />);
+    const chevrons = document.querySelector(".psmi-chevrons") as HTMLElement | null;
+    expect(chevrons).not.toBeNull();
+    const prev = chevrons!.querySelector('button[aria-label="Previous video"]') as HTMLButtonElement;
+    const nxt = chevrons!.querySelector('button[aria-label="Next video"]') as HTMLButtonElement;
+    expect(prev.disabled).toBe(true);
+    expect(nxt.disabled).toBe(false);
+  });
+
+  it("chevron pager: next button disabled on last item", () => {
+    render(<ImmersiveFeed items={items} initiallyOpen initialIndex={items.length - 1} />);
+    const chevrons = document.querySelector(".psmi-chevrons")!;
+    const prev = chevrons.querySelector('button[aria-label="Previous video"]') as HTMLButtonElement;
+    const nxt = chevrons.querySelector('button[aria-label="Next video"]') as HTMLButtonElement;
+    expect(prev.disabled).toBe(false);
+    expect(nxt.disabled).toBe(true);
+  });
+
+  it("chevron next button advances the active index", () => {
+    render(<ImmersiveFeed items={items} initiallyOpen initialIndex={0} />);
+    const dialog = document.querySelector('[role="dialog"]')!;
+    // Counter starts at "1".
+    expect(dialog.querySelector(".psmi-counter")!.textContent).toContain("1");
+    const nxt = dialog.querySelector('button[aria-label="Next video"]') as HTMLButtonElement;
+    act(() => { nxt.click(); });
+    // After next: counter reads "2".
+    const counter = document.querySelector(".psmi-counter")!;
+    expect(counter.textContent).toContain("2");
+  });
 });
