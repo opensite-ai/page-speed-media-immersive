@@ -74,4 +74,16 @@ describe("<ImmersiveViewer> integration", () => {
     expect(badge.style.top).toBe("16px");
     expect(badge.style.left).toBe("16px");
   });
+
+  it("mounts the video element with the muted attribute regardless of provider muted state", () => {
+    // Provider says isMuted=false, but the DOM <video> must still be muted
+    // at mount time so muted autoplay is guaranteed. The play/unmute effect
+    // flips element.muted = false imperatively after play() resolves.
+    render(<ImmersiveFeed items={items} initiallyOpen initiallyMuted={false} />);
+    const dialog = document.querySelector('[role="dialog"]')!;
+    const video = dialog.querySelector("video") as HTMLVideoElement | null;
+    expect(video).not.toBeNull();
+    // The `muted` boolean prop must be true on the initial render.
+    expect(video!.muted).toBe(true);
+  });
 });

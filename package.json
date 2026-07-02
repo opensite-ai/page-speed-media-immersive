@@ -1,6 +1,6 @@
 {
   "name": "@page-speed/media-immersive",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "TikTok/Reels/Shorts-style vertical video feed for React. Portal-isolated fullscreen viewer, pointer-driven pager, tappable thumbnail carousel, and a zero-defaults composable API. Built on @page-speed/img and @page-speed/video.",
   "keywords": [
     "react",
