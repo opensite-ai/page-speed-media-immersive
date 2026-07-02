@@ -151,17 +151,47 @@ export function ImmersiveViewer({
     setProgress(0);
   }, [activeIndex]);
 
-  // Enforce play/pause invariant: only the active video plays. Reset others' currentTime to 0.
+  // Enforce play/pause invariant: only the active video plays. Reset others'
+  // currentTime to 0.
+  //
+  // Autoplay policy handling (Chrome/Safari/Firefox all agree):
+  //   - .play() on an unmuted <video> is rejected unless the element itself
+  //     was directly activated by a user gesture. On open(), the gesture is
+  //     on the thumbnail button — by the time this effect fires and the
+  //     <video> is mounted, the gesture has been consumed and the browser
+  //     will reject unmuted play with NotAllowedError.
+  //   - .play() on a muted <video> is unconditionally allowed.
+  //   - Once a play() promise resolves on a media element, subsequent
+  //     programmatic .muted = false toggles are honored without a fresh
+  //     gesture (the media element inherits the tab's activation state).
+  //
+  // Strategy: force the element to `muted=true` before calling .play(),
+  // then after the promise resolves, sync it to the consumer's requested
+  // muted state (`isMuted`). Transparent to the user — the video fades in
+  // already playing, and audio comes on within one animation frame.
+  //
+  // A separate effect below keeps element.muted in sync with isMuted when
+  // the user toggles the header mute button after the initial play.
   useEffect(() => {
     if (!isOpen) return;
     for (const [idx, el] of videoRefs.current.entries()) {
       if (idx === activeIndex) {
+        // Start the play cycle muted so autoplay is guaranteed.
+        el.muted = true;
         const p = el.play();
         if (p && typeof p.then === "function") {
-          p.catch(() => {
+          p.then(() => {
+            // Sync to consumer's requested muted state after play succeeds.
+            // Reads from a ref so this effect doesn't re-fire on every
+            // mute toggle — mute changes are handled by the effect below.
+            el.muted = isMutedRef.current;
+          }).catch(() => {
             const item = items[idx];
             if (item) reportAutoplayBlocked(item);
           });
+        } else {
+          // Legacy return value — assume success synchronously.
+          el.muted = isMutedRef.current;
         }
       } else {
         el.pause();
@@ -172,7 +202,31 @@ export function ImmersiveViewer({
         }
       }
     }
+    // isMuted intentionally omitted — mute changes are handled separately
+    // and this effect should not restart playback on toggle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeIndex, isOpen, items, reportAutoplayBlocked]);
+
+  // Latest-ref for isMuted so the play effect above can read the freshest
+  // value inside its play() promise without depending on it.
+  const isMutedRef = useRef(isMuted);
+  isMutedRef.current = isMuted;
+
+  // Mute-sync effect: keep the active video element's .muted attribute in
+  // sync with the provider state without restarting playback. Runs on both
+  // active-index changes (new active video may need its muted flag synced)
+  // and on mute-toggle.
+  useEffect(() => {
+    if (!isOpen) return;
+    const el = videoRefs.current.get(activeIndex);
+    if (!el) return;
+    // Only sync if the initial play has already happened (readyState >= 2
+    // means the browser has current data and playback is viable). Before
+    // that, the play effect above owns the muted flag.
+    if (el.readyState >= 2) {
+      el.muted = isMuted;
+    }
+  }, [isMuted, activeIndex, isOpen]);
 
   // togglePlayPauseActive is declared below alongside the click handler; the
   // spacebar shortcut reads from a ref to keep the deps list stable.
@@ -406,7 +460,12 @@ export function ImmersiveViewer({
                       poster={item.poster}
                       preferNativeControls={false}
                       playsInline
-                      muted={isMuted}
+                      // Always mount muted so muted-autoplay is guaranteed;
+                      // the play/unmute effect above flips the DOM element's
+                      // .muted flag imperatively after the initial play
+                      // succeeds. Rendering `muted={isMuted}` here would
+                      // cause NotAllowedError on open() when isMuted=false.
+                      muted
                       loop={false}
                       preload={isActive ? "auto" : "metadata"}
                       onEnded={handleEnded(idx)}
