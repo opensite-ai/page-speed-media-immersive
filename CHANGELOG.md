@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - 2026-07-02
+
+### Fixed
+- **Autoplay still didn't fire on production in v0.3.2.** Root cause on
+  live inspection: even with `<video muted>` in JSX, some render paths
+  had React committing the `muted` DOM property in a microtask that ran
+  AFTER our play effect fired. Chrome/Safari inspect the property AND
+  the HTML attribute when applying autoplay policy, so a race between
+  React's property sync and our `.play()` call could produce
+  `NotAllowedError` and leave the takeover paused.
+
+  Three-layer fix:
+
+  1. **Force muted at play time.** Every `attemptPlay()` call now
+     explicitly sets `el.muted = true` AND `el.setAttribute("muted", "")`
+     right before invoking `.play()`. Both the DOM property and the HTML
+     attribute are guaranteed at the exact moment the browser evaluates
+     autoplay policy — no React-timing dependency.
+
+  2. **Retry on canplay + loadedmetadata.** In addition to the immediate
+     attempt and the next-frame attempt, we now attach `canplay` and
+     `loadedmetadata` event listeners to the active video. Both fire
+     when the browser confirms it has enough data to play; retrying
+     `.play()` at that instant succeeds even in browsers where the
+     earlier attempts were rejected for decode-readiness reasons.
+
+  3. **Keep the HTML attribute in step with the property on unmute.**
+     When the mute-sync effect flips `el.muted = false` after the
+     `playing` event, it also removes the `muted` HTML attribute so
+     the DOM property and attribute agree — preventing future
+     autoplay decisions (e.g. re-mount, tab-visibility resume) from
+     seeing a stale muted attribute.
+
+  Result: the takeover reliably autoplays on open across Chrome,
+  Safari, and Firefox, and the DOM muted state matches the provider's
+  isMuted state at every observable moment.
+
 ## [0.3.2] - 2026-07-01
 
 ### Fixed
