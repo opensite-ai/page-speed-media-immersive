@@ -64,6 +64,25 @@ export interface ImmersiveViewerProps {
 
 const TRANSITION_MS = 320;
 
+// Start-of-playback watchdog tuning. After a page becomes active, the active
+// video must reach REAL playback (currentTime advancing) within the initial
+// window; otherwise the watchdog re-kicks it every retry window, and after
+// the final retry it gives up and surfaces the tap-to-play glyph. Totals
+// ~3.6s from swipe to honest give-up — long enough for a slow network,
+// short enough that users are never stranded on a silent frozen frame.
+const WATCHDOG_INITIAL_DELAY_MS = 900;
+const WATCHDOG_RETRY_DELAY_MS = 900;
+const WATCHDOG_MAX_RETRIES = 3;
+
+/** True for the DOMException play() rejects with when the play request was
+ *  interrupted by OUR OWN pause()/source churn (e.g. pausing the outgoing
+ *  video mid-swipe). That is not an autoplay block — the browser never
+ *  refused playback — so it must not flip the UI to "paused" nor fire the
+ *  consumer's onAutoplayBlocked. */
+function isSelfInterruptedPlay(err: unknown): boolean {
+  return (err as DOMException | null)?.name === "AbortError";
+}
+
 /**
  * The fullscreen TikTok/Reels/Shorts-style vertical video viewer.
  *
@@ -125,22 +144,48 @@ export function ImmersiveViewer({
   const { offset, isDragging, containerRef } = useVerticalPagerGestures({
     itemCount: total,
     index: activeIndex,
-    onCommit: seek,
+    onCommit: (nextIndex) => {
+      // Prime the incoming video INSIDE the pointerup call stack, before
+      // React re-renders. On iOS WebKit the concurrent-decoder budget is
+      // tiny and a play() issued later from a passive effect can be
+      // accepted (paused flips false) yet never actually start. Claiming
+      // the media slot synchronously at commit — via the guaranteed
+      // muted-autoplay path — is what TikTok-style feeds do. The play
+      // effect then sees !el.paused and leaves the element alone; the
+      // `playing` listener restores the user's mute intent.
+      const el = videoRefs.current.get(nextIndex);
+      if (el && el.paused) {
+        el.muted = true;
+        el.setAttribute("muted", "");
+        const p = el.play();
+        if (p && typeof p.catch === "function") p.catch(() => {});
+      }
+      seek(nextIndex);
+    },
     onDragStart: () => {
       // Pause active video briefly during drag to avoid audio "chirp" when it
       // transitions to another video mid-swipe.
       const el = videoRefs.current.get(activeIndex);
       if (el && !el.paused) el.pause();
     },
-    onDragEnd: () => {
+    onDragEnd: (committed) => {
+      // On a committed swipe the NEW active video is already primed (see
+      // onCommit) and owned by the play effect. Resuming here would play
+      // the OUTGOING video (this closure's activeIndex is the pre-commit
+      // one) just for the play effect to pause it again — an AbortError
+      // play/pause burst on the media engine during every single swipe,
+      // and a spurious autoplay-blocked report.
+      if (committed) return;
       const el = videoRefs.current.get(activeIndex);
-      if (el && el.paused && isOpen) {
-        el.play().catch(() => {
-          if (activeItem) reportAutoplayBlocked(activeItem);
-        });
+      if (el && el.paused && !userPausedRef.current && isOpen) {
+        // Rejections here are either self-interruptions (another gesture
+        // started) or covered by the watchdog below — stay quiet.
+        el.play().catch(() => {});
       }
     },
   });
+  const isDraggingRef = useRef(isDragging);
+  isDraggingRef.current = isDragging;
 
   // Auto-dismiss swipe hint after first index change (user got the gesture).
   useEffect(() => {
@@ -186,6 +231,26 @@ export function ImmersiveViewer({
 
   const isMutedRef = useRef(isMuted);
   isMutedRef.current = isMuted;
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+
+  // The user's explicit pause intent. Set only by the tap/space toggle;
+  // cleared when they tap play again, when real playback starts, or when
+  // the active page changes. The watchdog consults this so it never
+  // auto-resumes a video the user paused on purpose.
+  const userPausedRef = useRef(false);
+  // Sticky "playback definitively failed" marker for the ACTIVE page: set
+  // when play() rejects with a real policy error or when the watchdog
+  // exhausts its retries. The playback-state derivation consults it so a
+  // failed video shows the tap-to-play glyph even at currentTime === 0
+  // (which would otherwise read as "buffering" — an infinite spinner).
+  // The watchdog and the play effect's retries also consult it, so the
+  // give-up verdict survives their re-runs (videoAttachTick bumps, SSE-
+  // driven items churn) instead of oscillating glyph -> spinner -> glyph.
+  const playFailedRef = useRef(false);
+  // At most ONE onAutoplayBlocked report per page activation, no matter
+  // how many retry surfaces (play effect, watchdog, tap) reach a verdict.
+  const blockReportedRef = useRef(false);
 
   // Playback-state indicator source of truth. Users could not tell a paused
   // video from a buffering one (both were just a still frame), so taps that
@@ -197,6 +262,23 @@ export function ImmersiveViewer({
   const [playbackState, setPlaybackState] = useState<
     "playing" | "paused" | "buffering"
   >("buffering");
+
+  // Fresh page (or fresh open) = fresh playback intent: forget any explicit
+  // pause, failure verdict, and blocked-report from the previous page.
+  useEffect(() => {
+    userPausedRef.current = false;
+    playFailedRef.current = false;
+    blockReportedRef.current = false;
+  }, [activeIndex, isOpen]);
+
+  const reportBlockedOnce = useCallback(
+    (item: MediaItem | undefined) => {
+      if (!item || blockReportedRef.current) return;
+      blockReportedRef.current = true;
+      reportAutoplayBlocked(item);
+    },
+    [reportAutoplayBlocked],
+  );
 
   // Effective muted = the DOM element's actual .muted value, not just the
   // provider's intent. When the browser rejects an unmute (media-engagement-
@@ -231,6 +313,15 @@ export function ImmersiveViewer({
     }
     const attemptPlay = () => {
       if (cancelled) return;
+      // Never override an explicit user pause: the retry listeners below
+      // (canplay/loadedmetadata) can fire AFTER the user paused — e.g. a
+      // pause during initial buffering followed by late-arriving data —
+      // and must not force the video (muted!) back to life.
+      // Likewise, once this page's playback definitively failed, further
+      // automatic attempts are pointless retry-storms (and duplicate
+      // blocked reports); only a user tap (which clears the flag) or a
+      // page change re-opens the attempt window.
+      if (userPausedRef.current || playFailedRef.current) return;
       const el = videoRefs.current.get(activeIndex);
       if (!el) return;
       // If the element is already playing (or a play() call is in flight —
@@ -243,6 +334,11 @@ export function ImmersiveViewer({
       // videoAttachTick bumps from neighbouring pages mounting) safe
       // while audio is on.
       if (!el.paused) return;
+      // A video that finished normally rests on its end frame — replaying
+      // it (muted, no less) on an effect re-run (items churn, attach tick,
+      // late canplay) would be a surprise restart. Explicit navigation
+      // still replays: leaving the page rewinds it, which clears `ended`.
+      if (el.ended) return;
       // Belt-and-suspenders: JSX renders <video muted> but React sets DOM
       // property .muted only on mount, and browsers consult BOTH the
       // property AND the HTML attribute when applying autoplay policy.
@@ -252,15 +348,24 @@ export function ImmersiveViewer({
       el.setAttribute("muted", "");
       const p = el.play();
       if (p && typeof p.catch === "function") {
-        p.catch(() => {
-          // Only fire the blocked callback if we've exhausted retries.
-          // The canplay/loadedmetadata listeners below will re-attempt.
-          const item = items[activeIndex];
-          if (item) reportAutoplayBlocked(item);
+        p.catch((err: unknown) => {
+          // AbortError = we interrupted this play() ourselves (pausing the
+          // outgoing video on swipe, watchdog re-kick, source churn). The
+          // browser never REFUSED playback, so it is not a block: stay
+          // quiet and let the retry paths finish the job. And once this
+          // effect run is cancelled the verdict belongs to a page we've
+          // already left — flagging it now would poison the NEW page's
+          // freshly-reset refs.
+          if (cancelled || isSelfInterruptedPlay(err)) return;
           // Surface the blocked state as "paused" so the centered play
           // glyph renders — a tap-to-play affordance instead of an
           // indefinite spinner (the video IS paused; a tap starts it).
-          if (!cancelled) setPlaybackState("paused");
+          // The sticky flag keeps later sync() runs (attach ticks, SSE
+          // re-renders) from re-deriving "buffering" off currentTime 0
+          // and stops further automatic attempts from re-reporting.
+          playFailedRef.current = true;
+          reportBlockedOnce(items[activeIndex]);
+          setPlaybackState("paused");
         });
       }
     };
@@ -297,7 +402,7 @@ export function ImmersiveViewer({
     // immediate attempt, the rAF attempt, nor the canplay/loadedmetadata
     // listeners land — the video sits paused forever.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeIndex, isOpen, items, reportAutoplayBlocked, videoAttachTick]);
+  }, [activeIndex, isOpen, items, reportBlockedOnce, videoAttachTick]);
 
   // Mute-sync effect: attach a `playing` listener to the active video so
   // that when the browser confirms real playback (which grants media-
@@ -349,6 +454,14 @@ export function ImmersiveViewer({
     }
     const sync = () => {
       if (el.paused) {
+        // An explicit user pause or a definitive playback failure always
+        // reads as "paused" (glyph) — even at currentTime 0, which would
+        // otherwise be mistaken for "still spinning up" and render an
+        // infinite spinner over a video that will never start by itself.
+        if (userPausedRef.current || playFailedRef.current) {
+          setPlaybackState("paused");
+          return;
+        }
         // currentTime > 0 = genuinely paused mid-video (show the glyph).
         // currentTime === 0 with low readiness = still spinning up (spinner).
         setPlaybackState(
@@ -359,7 +472,12 @@ export function ImmersiveViewer({
       }
     };
     sync();
-    const onPlaying = () => setPlaybackState("playing");
+    const onPlaying = () => {
+      // Real playback reached — any pause intent or failure verdict is over.
+      userPausedRef.current = false;
+      playFailedRef.current = false;
+      setPlaybackState("playing");
+    };
     const onWaiting = () => setPlaybackState("buffering");
     el.addEventListener("playing", onPlaying);
     el.addEventListener("pause", sync);
@@ -372,6 +490,95 @@ export function ImmersiveViewer({
     // videoAttachTick re-binds listeners when the element is (re-)attached.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeIndex, isOpen, videoAttachTick]);
+
+  // Start-of-playback watchdog. The autoplay pipeline above is event-driven
+  // (canplay / loadedmetadata retries), which has a blind spot on mobile
+  // WebKit: play() can be ACCEPTED (el.paused flips false) while the media
+  // engine never actually starts — no `playing`, no `pause`, and, because
+  // the wrapped <video> uses <source> children, no promise rejection
+  // either. The element sits frozen at currentTime 0 and every listener
+  // stays silent, so pre-0.4.1 the UI showed a bare frozen frame forever.
+  // The watchdog is the liveness check the events can't provide: if the
+  // active video hasn't reached REAL playback (currentTime advancing)
+  // within the window, re-kick it through the muted-autoplay path a few
+  // times, showing the buffering spinner meanwhile; when the retries are
+  // exhausted, give up honestly — tap-to-play glyph + onAutoplayBlocked.
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    let retries = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let lastTime = -1;
+
+    const arm = (ms: number) => {
+      if (cancelled) return;
+      timer = setTimeout(check, ms);
+    };
+
+    const check = () => {
+      if (cancelled) return;
+      const el = videoRefs.current.get(activeIndex);
+      // No element yet: the attach-tick dep re-runs this effect when one
+      // arrives. Never fight an explicit user pause, and never re-open a
+      // verdict this page already reached (attach-tick re-runs reset the
+      // local retry budget, but the give-up must stay terminal or the UI
+      // oscillates glyph -> spinner -> glyph on every neighbor mount).
+      if (!el || userPausedRef.current || playFailedRef.current) return;
+      // A video that finished normally is a healthy terminal state, not a
+      // stall — play() on an ended element would seek to 0 and silently
+      // REPLAY it (muted!). Leave it resting on its end frame.
+      if (el.ended) return;
+      // Mid-gesture the pager owns playback (it pauses on drag start);
+      // check again once the finger lifts.
+      if (isDraggingRef.current) {
+        arm(WATCHDOG_RETRY_DELAY_MS);
+        return;
+      }
+      const advancing =
+        !el.paused && el.currentTime > 0 && el.currentTime !== lastTime;
+      if (advancing) return; // Healthy: real playback reached. Disarm.
+      if (retries >= WATCHDOG_MAX_RETRIES) {
+        if (el.readyState >= 2) {
+          // Data is there but the engine won't start: a tap WILL fix it.
+          // Definitive give-up — honest tap-to-play glyph (never an
+          // infinite spinner / silent frozen frame) + one consumer report.
+          playFailedRef.current = true;
+          setPlaybackState("paused");
+          reportBlockedOnce(itemsRef.current[activeIndex]);
+        }
+        // readyState < 2 = the data genuinely hasn't arrived — a slow
+        // network, not a block. A tap couldn't render frames either, so
+        // the spinner stays (it is the truth) and the play effect's
+        // canplay/loadedmetadata listeners own the recovery from here.
+        return;
+      }
+      retries += 1;
+      lastTime = el.currentTime;
+      // Honest interim state: we are working on it, show the spinner.
+      setPlaybackState("buffering");
+      try {
+        // A wedged pending play() only resets via pause(); the fresh
+        // muted play() then re-enters the guaranteed-allowed autoplay
+        // path. The `playing` listener restores the user's mute intent.
+        if (!el.paused) el.pause();
+        el.muted = true;
+        el.setAttribute("muted", "");
+        const p = el.play();
+        if (p && typeof p.catch === "function") p.catch(() => {});
+      } catch {
+        // ignore — next tick re-evaluates
+      }
+      arm(WATCHDOG_RETRY_DELAY_MS);
+    };
+
+    arm(WATCHDOG_INITIAL_DELAY_MS);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+    // videoAttachTick re-arms the watchdog when the element is (re-)attached.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeIndex, isOpen, videoAttachTick, reportBlockedOnce]);
 
   // Track the ACTUAL DOM .muted state of the active video and expose it as
   // effectiveMuted for the header. Fires on:
@@ -493,14 +700,33 @@ export function ImmersiveViewer({
   const togglePlayPauseActive = useCallback(() => {
     const el = videoRefs.current.get(activeIndex);
     if (!el) return;
-    if (el.paused) {
-      el.play().catch(() => {
-        if (activeItem) reportAutoplayBlocked(activeItem);
-      });
-    } else {
+    // A wedged pending play() leaves paused === false while nothing has
+    // ever rendered (currentTime stuck at 0) — the user sees a stalled
+    // video, and their tap must START it. Pre-0.4.1 this keyed off
+    // el.paused alone, so that tap silently "paused" the zombie and a
+    // second tap was needed. currentTime > 0 = frames have demonstrably
+    // rendered, so the tap is an intentional pause — honored even during
+    // a transient mid-play rebuffer (paused === false, spinner showing).
+    const genuinelyPlaying = !el.paused && el.currentTime > 0;
+    if (genuinelyPlaying) {
+      userPausedRef.current = true;
       el.pause();
+      return;
     }
-  }, [activeIndex, activeItem, reportAutoplayBlocked]);
+    userPausedRef.current = false;
+    playFailedRef.current = false;
+    try {
+      // Reset a wedged pending play() so the fresh gesture-backed play()
+      // below starts from a clean request.
+      if (!el.paused) el.pause();
+    } catch {
+      // ignore
+    }
+    el.play().catch((err: unknown) => {
+      if (isSelfInterruptedPlay(err)) return;
+      reportBlockedOnce(activeItem);
+    });
+  }, [activeIndex, activeItem, reportBlockedOnce]);
   // Keep the keyboard-shortcut ref pointing at the latest instance.
   togglePlayPauseActiveRef.current = togglePlayPauseActive;
   const handleVideoClick = useCallback(
@@ -705,6 +931,7 @@ export function ImmersiveViewer({
                     {isActive && (
                       <div
                         aria-hidden="true"
+                        data-psmi-tap-overlay=""
                         onPointerDown={handleVideoPointerDown}
                         onClick={handleVideoClick}
                         style={{

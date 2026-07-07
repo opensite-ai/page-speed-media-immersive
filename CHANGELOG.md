@@ -5,6 +5,69 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-07-06
+
+### Fixed
+- **Mobile: videos silently never started after a few swipes (iOS WebKit).**
+  After 3–4 swipes the newly-active video could stall forever on its first
+  frame with no spinner, no glyph, and no way to know anything was wrong —
+  a tap (which "paused" the zombie, then a second tap) was the only way out.
+  Root cause is a WebKit blind spot the event-driven autoplay pipeline
+  couldn't see: `play()` is *accepted* (`el.paused` flips `false`) but the
+  media engine never starts — no `playing`, no `pause`, and, because the
+  wrapped `<video>` uses `<source>` children, no promise rejection either
+  (Chromium bug 718647 / WebKit bug 115000 family). The old retries only
+  rode on `canplay`/`loadedmetadata`, which never re-fire once data has
+  arrived, and the UI derived "playing" from `paused === false`. Fixes:
+  - **Start-of-playback watchdog.** If the active video hasn't reached real
+    playback (`currentTime` advancing) ~900ms after a page becomes active,
+    it is re-kicked through the guaranteed muted-autoplay path (`pause()`
+    to reset the wedged request, then a fresh muted `play()`), up to 3
+    times with the buffering spinner showing. On give-up the UI degrades
+    honestly to the tap-to-play glyph and fires `onAutoplayBlocked`.
+  - **Gesture-time priming.** On swipe commit the incoming video now gets
+    a muted `play()` synchronously inside the `pointerup` call stack —
+    claiming the (tiny) iOS media/decoder slot before React's effect
+    timing, the way TikTok-style feeds do.
+  - **Honest tap toggle.** Tapping keys off what the user *sees* (playback
+    state + rendered frames), not `el.paused` alone — a tap on a stalled
+    video now starts it instead of silently "pausing" a zombie.
+- **Every committed swipe replayed the outgoing video.** `onDragEnd`
+  ignored the `committed` flag and resumed the stale (pre-commit) active
+  video, which the play effect then immediately paused — an AbortError
+  play/pause burst against the media engine on every single swipe, plus a
+  spurious `onAutoplayBlocked` report. It now resumes only uncommitted
+  (rubber-band) drags.
+- **`AbortError` no longer misreported as autoplay-blocked.** Rejections
+  caused by our own interruptions (swipe-away pause, watchdog re-kick) no
+  longer flip the UI to "paused" nor fire `onAutoplayBlocked`; only real
+  policy refusals (e.g. `NotAllowedError`) do — and those now show the
+  tap-to-play glyph even at `currentTime === 0`, where the old derivation
+  rendered an infinite spinner.
+- **User pauses are never overridden.** Late `canplay`/`loadedmetadata`
+  retries (and the watchdog) no longer force a video back to life — muted,
+  no less — after the user explicitly paused it during buffering. Same for
+  rubber-band drag releases: they resume only videos the pager itself
+  paused, never an explicit user pause.
+- **Videos that finished normally stay finished.** Both the watchdog and
+  the play-effect retries now treat `el.ended` as a healthy terminal state.
+  Previously (pre-dating 0.4.1 for the play effect), an SSE-driven items
+  re-render could silently REPLAY the last video, muted, from its resting
+  end frame (`play()` on an ended element seeks to 0). Explicit navigation
+  still replays: leaving a page rewinds it, which clears `ended`.
+- **Failure verdicts are terminal and reports are deduplicated.** Once a
+  page's playback definitively fails, later effect re-runs (attach ticks,
+  SSE churn) no longer restart the retry cycle — pre-fix that oscillated
+  the UI glyph→spinner→glyph and fired `onAutoplayBlocked` once per
+  re-run. `onAutoplayBlocked` now fires at most once per page activation;
+  a user tap (or page change) is what re-opens the attempt window.
+- **Give-up is readiness-aware.** The watchdog only declares "blocked"
+  (glyph + `onAutoplayBlocked`) when data is actually available
+  (`readyState >= HAVE_CURRENT_DATA`) — i.e. when a tap WILL start the
+  video. A merely-slow network keeps the truthful buffering spinner and
+  recovery stays with the `canplay` listeners, instead of reporting a
+  false "blocked" on 3G.
+
 ## [0.4.0] - 2026-07-02
 
 ### Fixed
