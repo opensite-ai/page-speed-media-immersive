@@ -53,6 +53,21 @@ export interface ThumbnailStripProps {
    * can pass `false`.
    */
   autoplayPreview?: boolean;
+  /**
+   * Passed through to every default-rendered `<ThumbnailCard>`. See
+   * {@link ThumbnailCardProps.showDuration}. Default `true`. Ignored when a
+   * `renderItem` override is supplied (the consumer owns the card then).
+   */
+  showDuration?: boolean;
+  /**
+   * Passed through to every default-rendered `<ThumbnailCard>`. See
+   * {@link ThumbnailCardProps.glyphMode}. Default `"always"`. Ignored when a
+   * `renderItem` override is supplied.
+   *
+   * Per-item slots (e.g. a like-count `badgeSlot`) are not strip-level props —
+   * use `renderItem` to supply them per card.
+   */
+  glyphMode?: "always" | "hover" | "none";
   className?: string;
   style?: React.CSSProperties;
 }
@@ -83,6 +98,8 @@ export function ThumbnailStrip({
   gap = 12,
   edgePadding = 4,
   autoplayPreview = true,
+  showDuration = true,
+  glyphMode = "always",
   className,
   style,
 }: ThumbnailStripProps) {
@@ -134,6 +151,8 @@ export function ThumbnailStrip({
               size={size}
               onOpen={resolvedOpen}
               autoplayPreview={autoplayPreview}
+              showDuration={showDuration}
+              glyphMode={glyphMode}
             />
           ),
         )}

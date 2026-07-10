@@ -124,10 +124,13 @@ Every consumer works with a `MediaItem[]`. Only three fields are required.
 ```ts
 interface MediaItem {
   id: string;                    // stable id
-  poster: string;                // thumbnail URL
+  poster: string;                // video: thumbnail URL — image: the image itself
   title: string;                 // shown on card overlay + fullscreen caption
 
-  // At least one video source (any/all — @page-speed/video picks):
+  type?: "video" | "image";      // defaults to "video" when omitted
+
+  // At least one video source (any/all — @page-speed/video picks).
+  // Ignored when type: "image":
   src?: string;                  // progressive mp4 or transform URL
   masterPlaylistUrl?: string;    // pre-computed HLS master
   fallbackSrc?: string;          // progressive mp4 fallback
@@ -136,13 +139,47 @@ interface MediaItem {
   badge?: string;                // "INTRO", "PRODUCT TOUR", ...
   kind?: string;                 // "Demo", "Testimonial", ...
   caption?: string;              // long caption (fullscreen only)
-  durationMs?: number;           // pre-computed, or read from video metadata
-  durationLabel?: string;        // pre-formatted, else derived from durationMs
+  durationMs?: number;           // video only; pre-computed or read from metadata
+  durationLabel?: string;        // video only; pre-formatted, else from durationMs
 
   // Free-form consumer metadata (analytics, order ids, lesson refs, ...)
   meta?: Record<string, unknown>;
 }
 ```
+
+## Image items
+
+Set `type: "image"` to mix stills into the feed. `poster` **is** the image; it
+renders full-bleed via `@page-speed/img` and shares the video slide's 9:16
+layout and letterboxing. All video chrome is suppressed for image slides — the
+mute pill, progress bar, playback glyph/spinner, and autoplay watchdogs — and
+image slides never auto-advance (navigate them manually, IG-style). Navigation,
+header, caption, and the actions rail behave identically to video slides. All
+video-only fields (`src`, `masterPlaylistUrl`, `fallbackSrc`, `durationMs`,
+`durationLabel`) are ignored.
+
+```tsx
+const items = [
+  { id: "clip", poster: "/reel-1.jpg", src: "/reel-1.mp4", title: "The tour" },
+  { id: "shot", type: "image", poster: "/photo-2.jpg", title: "On location" },
+];
+
+<ImmersiveFeed items={items} />
+```
+
+## Thumbnail card props for social-feed layouts
+
+`<ThumbnailCard>` (and, where noted, `<ThumbnailStrip>`) support IG-style tiles:
+
+| Prop | Type | Default | Notes |
+|---|---|---|---|
+| `badgeSlot` | `React.ReactNode` | — | **Replaces** the built-in `item.badge` chip with a caller-owned, unstyled slot in the same top-left position (e.g. a like-count badge). |
+| `showDuration` | `boolean` | `true` | `false` removes the duration label (and its audio-bars glyph) while keeping the title. Not the same as `hideCaption`. Forwarded by `ThumbnailStrip`. Image items never show a duration. |
+| `glyphMode` | `"always" \| "hover" \| "none"` | `"always"` | `"always"` = pre-0.5 behavior (hover reveal on pointer, always-on for touch). `"hover"` reveals only on mouse-hover or keyboard focus and stays hidden on touch (the whole card is the tap target). `"none"` renders no glyph. The glyph icon auto-selects: a play triangle for videos, an expand icon for images. Forwarded by `ThumbnailStrip`. |
+| `size` | `"sm" \| "md" \| "hero" \| "ig" \| number` | `"md"` | The `"ig"` preset (264px) is a vertical 9:16 tile larger than the client-portal presets. |
+
+Per-item slots such as `badgeSlot` are card-level, not strip-level — supply them
+via `<ThumbnailStrip renderItem={...}>`.
 
 ## Actions rail (the right-side buttons)
 

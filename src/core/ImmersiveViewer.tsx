@@ -16,6 +16,7 @@ import { useScrollLock } from "../hooks/useScrollLock.js";
 import { useVerticalPagerGestures } from "../hooks/useVerticalPagerGestures.js";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts.js";
 import { prefersReducedMotion } from "../utils/prefersReducedMotion.js";
+import { isImageItem } from "../utils/isImageItem.js";
 import { ImmersiveViewerHeader } from "./ImmersiveViewerHeader.js";
 import { ImmersiveViewerActions } from "./ImmersiveViewerActions.js";
 import { ImmersiveViewerCaption } from "./ImmersiveViewerCaption.js";
@@ -48,6 +49,8 @@ export interface ImmersiveViewerProps {
     activeIndex1Based: number;
     total: number;
     muted: boolean;
+    /** True when the active slide is an image — hide the mute affordance. */
+    hideMute: boolean;
     onClose: () => void;
     onToggleMute: () => void;
   }) => React.ReactNode;
@@ -120,6 +123,10 @@ export function ImmersiveViewer({
 
   const total = items.length;
   const activeItem = items[activeIndex];
+  // When the active slide is an image, all video chrome is suppressed: the
+  // header's mute pill is hidden (there is no audio to toggle), and the
+  // per-slide progress bar / playback glyph / spinner are not rendered.
+  const activeIsImage = activeItem ? isImageItem(activeItem) : false;
 
   const [progress, setProgress] = useState(0); // 0..1
   const [swipeHintDismissed, setSwipeHintDismissed] = useState(false);
@@ -818,6 +825,11 @@ export function ImmersiveViewer({
             {renderWindow.map((idx) => {
               const item = items[idx]!;
               const isActive = idx === activeIndex;
+              // Image slides render the poster as the full-bleed subject with
+              // no <Video>, no play/pause tap target, and no playback chrome.
+              // The layout/letterboxing (the 9:16 clamp + object-fit: cover)
+              // is shared with video slides so mixed feeds transition cleanly.
+              const isImage = isImageItem(item);
               return (
                 <section
                   key={item.id}
@@ -848,11 +860,16 @@ export function ImmersiveViewer({
                       background: "#000",
                     }}
                   >
-                    {/* Poster while video loads */}
+                    {/*
+                      The poster <Img>. For videos it is the initial paint
+                      shown while the video loads (decorative, aria-hidden).
+                      For images it IS the content, so it carries the item's
+                      title as its accessible name and drops aria-hidden.
+                    */}
                     <Img
                       src={item.poster}
-                      alt=""
-                      aria-hidden="true"
+                      alt={isImage ? item.title : ""}
+                      aria-hidden={isImage ? undefined : "true"}
                       style={{
                         position: "absolute",
                         inset: 0,
@@ -861,7 +878,15 @@ export function ImmersiveViewer({
                         objectFit: "cover",
                       }}
                     />
-                    {/* Actual video — @page-speed/video handles HLS + mp4 fallback */}
+                    {/*
+                      Actual video — @page-speed/video handles HLS + mp4
+                      fallback. Not rendered for image slides: there is no
+                      video source, so no <video> element is ever attached to
+                      videoRefs at this index. The play/mute/watchdog effects
+                      all key off videoRefs.get(activeIndex) and no-op when it
+                      is absent, so image slides run zero playback machinery.
+                    */}
+                    {!isImage && (
                     <Video
                       src={item.src}
                       masterPlaylistUrl={item.masterPlaylistUrl}
@@ -905,6 +930,7 @@ export function ImmersiveViewer({
                         background: "#000",
                       }}
                     />
+                    )}
                     {/* Gradient scrim */}
                     <div
                       aria-hidden="true"
@@ -928,7 +954,7 @@ export function ImmersiveViewer({
                       guaranteeing a click can never be interpreted as a
                       pager commit.
                     */}
-                    {isActive && (
+                    {isActive && !isImage && (
                       <div
                         aria-hidden="true"
                         data-psmi-tap-overlay=""
@@ -952,7 +978,7 @@ export function ImmersiveViewer({
                       large play glyph while paused, a delayed spinner while
                       buffering so paused ≠ "is it broken?".
                     */}
-                    {isActive && !isDragging && playbackState === "paused" && (
+                    {isActive && !isImage && !isDragging && playbackState === "paused" && (
                       <div
                         aria-hidden="true"
                         className="psmi-delayed-show-fast"
@@ -991,7 +1017,7 @@ export function ImmersiveViewer({
                         </span>
                       </div>
                     )}
-                    {isActive && !isDragging && playbackState === "buffering" && (
+                    {isActive && !isImage && !isDragging && playbackState === "buffering" && (
                       <div
                         aria-hidden="true"
                         className="psmi-delayed-show"
@@ -1097,8 +1123,12 @@ export function ImmersiveViewer({
                       )
                     )}
 
-                    {/* Progress bar (bottom edge, active only) */}
-                    {isActive && (
+                    {/*
+                      Progress bar (bottom edge, active video only). Image
+                      slides have no playback timeline, so it is suppressed
+                      for them.
+                    */}
+                    {isActive && !isImage && (
                       <div
                         aria-hidden="true"
                         style={{
@@ -1180,6 +1210,7 @@ export function ImmersiveViewer({
               activeIndex1Based: activeIndex + 1,
               total,
               muted: effectiveMuted,
+              hideMute: activeIsImage,
               onClose: close,
               onToggleMute: () => {
                 const target = !effectiveMuted;
@@ -1200,6 +1231,7 @@ export function ImmersiveViewer({
               activeIndex1Based={activeIndex + 1}
               total={total}
               muted={effectiveMuted}
+              hideMute={activeIsImage}
               onClose={close}
               onToggleMute={() => {
                 const target = !effectiveMuted;

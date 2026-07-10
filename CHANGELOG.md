@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-07-10
+
+### Added
+- **Image items — first-class alongside videos.** `MediaItem` gains
+  `type?: "video" | "image"`. It defaults to `"video"` when omitted, so every
+  existing consumer is unaffected. For `type: "image"`, `poster` **is** the
+  image and all video-only fields (`src`, `masterPlaylistUrl`, `fallbackSrc`,
+  `durationMs`, `durationLabel`) are ignored.
+  - **Viewer.** Image slides render `poster` full-bleed via `@page-speed/img`,
+    sharing the video slide's 9:16 layout/letterboxing. All video chrome is
+    suppressed for image slides: the mute pill (header), the progress bar, the
+    playback glyph/spinner, the tap-to-play overlay, and the autoplay
+    watchdogs (no `<video>` is attached, so the play/mute/watchdog effects
+    no-op). Navigation (swipe / chevrons / keyboard), header, caption card,
+    and the actions rail work identically. Image slides never auto-advance —
+    they are navigated manually, IG-style. Mixed video/image feeds transition
+    cleanly in both directions.
+  - **Thumbnail card.** Image items render a static poster (`autoplayPreview`
+    is a no-op), with no audio-bars glyph, no duration, and no mute icon. The
+    center glyph is an expand (maximize) icon instead of a play triangle.
+- **`ThumbnailCard` `badgeSlot?: React.ReactNode`.** When provided, fully
+  **replaces** the built-in top-left `item.badge` chip with a caller-owned,
+  unstyled slot in the same position — for the IG-style like-count badge.
+- **`ThumbnailCard` `showDuration?: boolean` (default `true`).** When `false`,
+  removes the duration label (and its audio-bars glyph) from the caption while
+  keeping the title — unlike `hideCaption`, which removes the whole overlay.
+- **`ThumbnailCard` `glyphMode?: "always" | "hover" | "none"` (default
+  `"always"`).** `"always"` keeps the pre-0.5 behavior (reveal on hover for
+  pointer devices, always visible on touch). `"hover"` hides the glyph until
+  the card is hovered (mouse) or focused (keyboard a11y) and keeps it hidden on
+  touch devices — where the whole card is the tap target. `"none"` renders no
+  glyph. `ThumbnailStrip` forwards `showDuration` and `glyphMode` to its
+  default cards.
+- **`ThumbnailCard`/`ThumbnailStrip` `"ig"` size preset (264px).** A vertical
+  9:16 tile deliberately larger than the client-portal presets
+  (`sm`/`md`/`hero`) so posters read like a social feed.
+- **`ImmersiveViewerHeader` `hideMute?: boolean` (default `false`).** Hides the
+  mute toggle; set by the viewer when the active slide is an image. The
+  `renderHeader` render-prop now also receives `hideMute`.
+
 ## [0.4.1] - 2026-07-06
 
 ### Fixed
