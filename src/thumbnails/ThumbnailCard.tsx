@@ -1,10 +1,11 @@
 "use client";
 
-import React, { forwardRef, useEffect, useMemo, useRef } from "react";
+import React, { forwardRef, useEffect, useMemo, useRef, useState } from "react";
 import { Img } from "@page-speed/img";
 import type { MediaItem } from "../types/index.js";
 import { formatDuration } from "../utils/formatDuration.js";
 import { prefersReducedMotion } from "../utils/prefersReducedMotion.js";
+import { isImageItem } from "../utils/isImageItem.js";
 
 /**
  * Preset thumbnail sizes.
@@ -12,8 +13,14 @@ import { prefersReducedMotion } from "../utils/prefersReducedMotion.js";
  * - `sm`  — 88px wide  (used in the "AI-generated reel" callout in the design)
  * - `md`  — 152px wide (used in the horizontal carousel row)
  * - `hero` — 200px wide (a heavier featured thumbnail)
+ * - `ig`  — 264px wide (the Instagram-style feed tile — deliberately larger
+ *   than the client-portal presets above so posters read like a social feed
+ *   rather than a compact carousel)
+ *
+ * All presets render a vertical 9:16 tile; pass a raw pixel width for anything
+ * in between.
  */
-export type ThumbnailSize = "sm" | "md" | "hero" | number;
+export type ThumbnailSize = "sm" | "md" | "hero" | "ig" | number;
 
 /**
  * Props for `<ThumbnailCard>`.
@@ -49,6 +56,34 @@ export interface ThumbnailCardProps {
   hideMutedIcon?: boolean;
   /** Hide the bottom title/duration overlay. */
   hideCaption?: boolean;
+  /**
+   * When provided, **replaces** the top-left badge chip entirely. Rendered in
+   * the same top-left position but as an unstyled slot — the consumer owns all
+   * of the pill's styling (background, padding, radius, colour). Used for the
+   * IG-style like-count badge that supersedes the `item.badge` string chip.
+   * When omitted, the built-in `item.badge` chip renders as before.
+   */
+  badgeSlot?: React.ReactNode;
+  /**
+   * Show the duration label in the caption overlay. Default `true`. When
+   * `false`, the duration (whether from `item.durationLabel` or derived from
+   * `item.durationMs`) and its audio-bars glyph are removed while the title is
+   * KEPT — unlike `hideCaption`, which removes the whole overlay. Image items
+   * never show a duration regardless of this flag.
+   */
+  showDuration?: boolean;
+  /**
+   * Controls when the center glyph (a play triangle for videos, an expand
+   * icon for images) is shown.
+   *
+   * - `"always"` (default) — the pre-0.5 behavior: revealed on hover for
+   *   pointer devices, always visible on touch devices.
+   * - `"hover"` — hidden until the card is hovered (mouse) or focused
+   *   (keyboard a11y). On touch devices (no hover) the glyph stays hidden and
+   *   the whole card is the tap target.
+   * - `"none"` — the glyph is never rendered.
+   */
+  glyphMode?: "always" | "hover" | "none";
   /** Hide the animated progress hint line at the bottom. */
   hideProgressHint?: boolean;
   /**
@@ -68,12 +103,27 @@ export interface ThumbnailCardProps {
   className?: string;
   /** Additional inline style applied to the outer element. */
   style?: React.CSSProperties;
+  /**
+   * Extra props forwarded to the internal `@page-speed/img` `<Img>` that
+   * renders the poster (the static-poster branch — not the autoplay-preview
+   * `<video>`). Use this to pass consumer concerns such as `className`,
+   * `optixFlowConfig`, `sizes`, `loading`, or `data-*` attributes down to the
+   * image.
+   *
+   * These are spread onto the `<Img>` but the card retains ownership of the
+   * load-bearing poster contract: `src` and `alt` (and the card's positioning
+   * `style`) are always applied by the card and CANNOT be overridden here —
+   * any `src`/`alt` keys passed in are ignored. A `style` passed here is
+   * shallow-merged UNDER the card's own positioning style.
+   */
+  posterImgProps?: Record<string, unknown>;
 }
 
 function resolveWidth(size: ThumbnailSize): number {
   if (typeof size === "number") return size;
   if (size === "sm") return 88;
   if (size === "hero") return 200;
+  if (size === "ig") return 264;
   return 152; // "md"
 }
 
@@ -96,29 +146,48 @@ export const ThumbnailCard = forwardRef<HTMLButtonElement, ThumbnailCardProps>(
       showMutedIcon,
       hideMutedIcon,
       hideCaption,
+      badgeSlot,
+      showDuration = true,
+      glyphMode = "always",
       hideProgressHint,
       autoplayPreview = true,
       elevated = true,
       className,
       style,
+      posterImgProps,
     },
     ref,
   ) {
     const width = resolveWidth(size);
     const radius = resolveBorderRadius(size);
+    // Image items are a static poster with no playback affordances: no video
+    // preview, no audio-bars glyph, no duration, no mute icon. The center
+    // glyph becomes an "expand" icon instead of a play triangle.
+    const isImage = isImageItem(item);
+    // Duration only applies to videos, and only when the consumer keeps it on.
     const durationLabel =
-      item.durationLabel ??
-      (item.durationMs != null ? formatDuration(item.durationMs) : "");
+      isImage || !showDuration
+        ? ""
+        : (item.durationLabel ??
+          (item.durationMs != null ? formatDuration(item.durationMs) : ""));
 
     // Decide the visual: autoplay preview (muted looping <video>) vs. static
     // poster (<Img>). Reasons we would NOT autoplay:
-    //   1. Consumer explicitly opted out via `autoplayPreview={false}`.
-    //   2. User has `prefers-reduced-motion: reduce` (accessibility respect).
-    //   3. Item has no video source to preview — poster is the only option.
-    const videoSrc =
-      item.src ?? item.masterPlaylistUrl ?? item.fallbackSrc ?? undefined;
+    //   1. The item is an image — `autoplayPreview` is a no-op, poster only.
+    //   2. Consumer explicitly opted out via `autoplayPreview={false}`.
+    //   3. User has `prefers-reduced-motion: reduce` (accessibility respect).
+    //   4. Item has no video source to preview — poster is the only option.
+    const videoSrc = isImage
+      ? undefined
+      : (item.src ?? item.masterPlaylistUrl ?? item.fallbackSrc ?? undefined);
     const wantsPreview =
       autoplayPreview && Boolean(videoSrc) && !prefersReducedMotion();
+
+    // Glyph visibility for `glyphMode="hover"` is JS-driven so it is testable
+    // and works for standalone cards (outside a <ThumbnailStrip> scope, where
+    // the injected :hover stylesheet does not reach). `"always"` keeps the
+    // legacy CSS-driven reveal; `"none"` renders no glyph at all.
+    const [glyphHovered, setGlyphHovered] = useState(false);
 
     // Resolve mute-icon visibility. Both props are optional. When both are
     // omitted, the icon is hidden (new default). When `showMutedIcon` is
@@ -163,6 +232,20 @@ export const ThumbnailCard = forwardRef<HTMLButtonElement, ThumbnailCardProps>(
 
     const handleActivate = () => onOpen(item.id);
 
+    // Consumer-supplied poster <Img> props, sanitized. `src`/`alt` are owned
+    // by the card (the poster contract) and stripped here so a consumer
+    // cannot break them; everything else (className, optixFlowConfig, sizes,
+    // loading, data-*, style, …) is forwarded onto the <Img>. A consumer
+    // `style` is kept on the object but is shallow-merged UNDER the card's own
+    // positioning style at the render site below.
+    const safePosterImgProps = useMemo<Record<string, unknown> | undefined>(() => {
+      if (!posterImgProps) return undefined;
+      const next: Record<string, unknown> = { ...posterImgProps };
+      delete next.src;
+      delete next.alt;
+      return next;
+    }, [posterImgProps]);
+
     // A single memo to avoid recreating the outer style object on every render.
     const rootStyle = useMemo<React.CSSProperties>(
       () => ({
@@ -196,9 +279,48 @@ export const ThumbnailCard = forwardRef<HTMLButtonElement, ThumbnailCardProps>(
       <button
         ref={ref}
         type="button"
-        aria-label={`Play ${item.title}`}
+        aria-label={`${isImage ? "Expand" : "Play"} ${item.title}`}
         onClick={handleActivate}
-        className={`psmi-card ${className ?? ""}`}
+        // Hover/focus only drives the glyph in `"hover"` mode. The pointer
+        // guard keeps touch taps (pointerType "touch") from revealing it —
+        // per the spec, on touch the whole card is the tap target and the
+        // glyph stays hidden.
+        onPointerEnter={
+          glyphMode === "hover"
+            ? (e) => {
+                if (e.pointerType === "mouse") setGlyphHovered(true);
+              }
+            : undefined
+        }
+        onPointerLeave={
+          glyphMode === "hover" ? () => setGlyphHovered(false) : undefined
+        }
+        // Focus reveals the glyph ONLY for keyboard focus (`:focus-visible`).
+        // Touch taps also focus the button (per the pointer/focus spec), but
+        // the "hover" contract says the glyph must stay hidden on touch — the
+        // whole card is the tap target there. `:focus-visible` is the
+        // browser's own "did this focus come from the keyboard?" signal, so
+        // we gate on it. If the engine doesn't implement `:focus-visible`
+        // (older jsdom/happy-dom), `matches` may throw or return false — in
+        // that case we keep the glyph hidden.
+        onFocus={
+          glyphMode === "hover"
+            ? (event) => {
+                let focusVisible = false;
+                try {
+                  focusVisible =
+                    event.currentTarget.matches?.(":focus-visible") ?? false;
+                } catch {
+                  focusVisible = false;
+                }
+                if (focusVisible) setGlyphHovered(true);
+              }
+            : undefined
+        }
+        onBlur={
+          glyphMode === "hover" ? () => setGlyphHovered(false) : undefined
+        }
+        className={`psmi-card psmi-glyph-${glyphMode} ${className ?? ""}`}
         style={rootStyle}
       >
         {/*
@@ -233,10 +355,18 @@ export const ThumbnailCard = forwardRef<HTMLButtonElement, ThumbnailCardProps>(
           />
         ) : (
           <Img
+            // Consumer passthrough first so the card's own load-bearing props
+            // (src/alt/aria-hidden and positioning style) always win below.
+            {...(safePosterImgProps as React.ComponentProps<typeof Img>)}
             src={item.poster}
-            alt=""
-            aria-hidden="true"
+            // For image items the poster IS the content, so it carries the
+            // item title as its accessible name; for video posters it stays
+            // decorative (the <video> preview or the caption conveys meaning).
+            alt={isImage ? item.title : ""}
+            aria-hidden={isImage ? undefined : "true"}
             style={{
+              // Consumer style merged UNDER the card's positioning contract.
+              ...(safePosterImgProps?.style as React.CSSProperties | undefined),
               position: "absolute",
               inset: 0,
               width: "100%",
@@ -265,8 +395,25 @@ export const ThumbnailCard = forwardRef<HTMLButtonElement, ThumbnailCardProps>(
           />
         )}
 
-        {/* Badge (top-left) */}
-        {item.badge ? (
+        {/*
+          Top-left badge. `badgeSlot`, when provided, fully REPLACES the
+          built-in chip — the wrapper only positions it (top-left); the
+          consumer owns the pill's styling. Falls back to the `item.badge`
+          string chip when no slot is passed.
+        */}
+        {badgeSlot !== undefined ? (
+          <span
+            style={{
+              position: "absolute",
+              top: 8,
+              left: 8,
+              display: "inline-flex",
+              alignItems: "center",
+            }}
+          >
+            {badgeSlot}
+          </span>
+        ) : item.badge ? (
           <span
             style={{
               position: "absolute",
@@ -299,8 +446,9 @@ export const ThumbnailCard = forwardRef<HTMLButtonElement, ThumbnailCardProps>(
         ) : null}
 
         {/* Muted-speaker icon (top-right). Off by default — at this size
-            the audio-bars glyph in the caption already conveys audio. */}
-        {muteIconVisible ? (
+            the audio-bars glyph in the caption already conveys audio.
+            Never drawn for image items (no audio affordances). */}
+        {muteIconVisible && !isImage ? (
           <span
             aria-hidden="true"
             style={{
@@ -325,41 +473,84 @@ export const ThumbnailCard = forwardRef<HTMLButtonElement, ThumbnailCardProps>(
           </span>
         ) : null}
 
-        {/* Play-button hover reveal — visible on touch (per media query in
-            the injected stylesheet), transparent + fades in on hover on
-            pointer devices. */}
-        <span
-          aria-hidden="true"
-          className="psmi-play-hover"
-          style={{
-            position: "absolute",
-            inset: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "rgba(8,12,24,0)",
-            transition: "background 0.2s",
-            pointerEvents: "none",
-          }}
-        >
+        {/*
+          Center glyph. The icon auto-selects by media kind: a play triangle
+          for videos, an expand (maximize) icon for images.
+
+          Visibility by `glyphMode`:
+          - "none"   → not rendered at all.
+          - "always" → legacy CSS-driven reveal (hover on pointer devices,
+                       always-on for touch), no inline opacity so the injected
+                       stylesheet owns it.
+          - "hover"  → JS-driven (`glyphHovered`): hidden until mouse-hover or
+                       keyboard focus; stays hidden on touch.
+        */}
+        {glyphMode === "none" ? null : (
           <span
-            className="psmi-play-btn"
+            aria-hidden="true"
+            className="psmi-play-hover"
             style={{
-              width: 46,
-              height: 46,
-              borderRadius: "50%",
-              background: "rgba(255,255,255,0.94)",
+              position: "absolute",
+              inset: 0,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              boxShadow: "0 6px 18px rgba(0,0,0,0.35)",
+              background:
+                glyphMode === "hover"
+                  ? glyphHovered
+                    ? "rgba(8,12,24,0.32)"
+                    : "rgba(8,12,24,0)"
+                  : "rgba(8,12,24,0)",
+              transition: "background 0.2s",
+              pointerEvents: "none",
             }}
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="#182b4a" style={{ marginLeft: 2 }}>
-              <path d="M7 5v14l12-7z" />
-            </svg>
+            <span
+              className="psmi-play-btn"
+              style={{
+                width: 46,
+                height: 46,
+                borderRadius: "50%",
+                background: "rgba(255,255,255,0.94)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                boxShadow: "0 6px 18px rgba(0,0,0,0.35)",
+                // "hover" mode owns opacity/scale inline so it works even for
+                // standalone cards outside a <ThumbnailStrip> scope (where the
+                // scoped :hover stylesheet does not reach). "always" leaves
+                // these unset so the legacy stylesheet drives the reveal.
+                ...(glyphMode === "hover"
+                  ? {
+                      opacity: glyphHovered ? 1 : 0,
+                      transform: glyphHovered ? "scale(1)" : "scale(0.7)",
+                      transition:
+                        "transform 0.22s cubic-bezier(0.2,0.8,0.3,1), opacity 0.2s ease",
+                    }
+                  : null),
+              }}
+            >
+              {isImage ? (
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="#182b4a"
+                  strokeWidth="2.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />
+                </svg>
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="#182b4a" style={{ marginLeft: 2 }}>
+                  <path d="M7 5v14l12-7z" />
+                </svg>
+              )}
+            </span>
           </span>
-        </span>
+        )}
 
         {/* Caption + duration */}
         {hideCaption ? null : (
@@ -386,33 +577,41 @@ export const ThumbnailCard = forwardRef<HTMLButtonElement, ThumbnailCardProps>(
             >
               {item.title}
             </span>
-            <span
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                marginTop: 6,
-                color: "#fff",
-              }}
-            >
-              <span className="psmi-eq" aria-hidden="true">
-                <i />
-                <i />
-                <i />
-                <i />
-              </span>
-              {durationLabel ? (
-                <span
-                  style={{
-                    fontSize: 10,
-                    color: "rgba(255,255,255,0.75)",
-                    fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-                  }}
-                >
-                  {durationLabel}
+            {/*
+              Audio-bars glyph + duration. Videos only — image items have no
+              audio and no timeline, so the whole line is dropped for them.
+              The duration text itself is further gated by `showDuration`
+              (durationLabel is "" when that flag is false).
+            */}
+            {isImage ? null : (
+              <span
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  marginTop: 6,
+                  color: "#fff",
+                }}
+              >
+                <span className="psmi-eq" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                  <i />
                 </span>
-              ) : null}
-            </span>
+                {durationLabel ? (
+                  <span
+                    style={{
+                      fontSize: 10,
+                      color: "rgba(255,255,255,0.75)",
+                      fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+                    }}
+                  >
+                    {durationLabel}
+                  </span>
+                ) : null}
+              </span>
+            )}
             {hideProgressHint ? null : (
               <span
                 aria-hidden="true"

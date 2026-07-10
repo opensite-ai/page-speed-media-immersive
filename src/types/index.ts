@@ -8,47 +8,71 @@
 import type React from "react";
 
 /**
- * A single video/media item in the feed.
+ * A single media item in the feed.
  *
- * The two most important fields are `poster` (used for the thumbnail card and as
- * the initial paint for the fullscreen viewer) and one of the video source fields
+ * Items are either **videos** (the default) or **images**. For videos, the two
+ * most important fields are `poster` (used for the thumbnail card and as the
+ * initial paint for the fullscreen viewer) and one of the video source fields
  * (`src`, `masterPlaylistUrl`, or `fallbackSrc`) which are passed through to
  * `@page-speed/video`.
+ *
+ * For images (`type: "image"`), `poster` **is** the image — it is rendered
+ * full-bleed by `@page-speed/img` in both the thumbnail card and the viewer,
+ * and every video-only field (`src`, `masterPlaylistUrl`, `fallbackSrc`,
+ * `durationMs`, `durationLabel`) is ignored.
  */
 export interface MediaItem {
   /** Stable unique id. Used for `open(id)` and for React keys. */
   id: string;
 
   /**
-   * Poster/thumbnail image URL. Rendered by `@page-speed/img` so it benefits
-   * from AVIF/WebP negotiation and lazy loading when applicable.
+   * Discriminates the media kind. `"video"` (the default when omitted — so all
+   * pre-existing consumers are unaffected) plays through `@page-speed/video`;
+   * `"image"` renders `poster` as a full-bleed still through `@page-speed/img`
+   * and suppresses all playback chrome (mute pill, progress bar, playback
+   * glyph/spinner, autoplay watchdogs). Image slides never auto-advance —
+   * they are navigated manually, IG-style.
+   */
+  type?: "video" | "image";
+
+  /**
+   * For videos: the poster/thumbnail image shown while the video loads.
+   * For images (`type: "image"`): **this is the image itself**, rendered
+   * full-bleed. Rendered by `@page-speed/img` so it benefits from AVIF/WebP
+   * negotiation and lazy loading when applicable.
    */
   poster: string;
 
   /**
    * Video source URL. May be a progressive mp4, or a URL that the Octane
    * transform layer will convert to HLS. Passed to `<Video src={...}>`.
+   * Ignored when `type: "image"`.
    */
   src?: string;
 
   /**
    * Pre-computed HLS master playlist URL. When provided, `<Video>` skips
-   * its transform call and streams directly.
+   * its transform call and streams directly. Ignored when `type: "image"`.
    */
   masterPlaylistUrl?: string;
 
-  /** Progressive mp4 fallback if HLS fails or is unsupported. */
+  /**
+   * Progressive mp4 fallback if HLS fails or is unsupported.
+   * Ignored when `type: "image"`.
+   */
   fallbackSrc?: string;
 
   /**
    * Optional pre-computed duration in milliseconds. If omitted, the underlying
    * `<video>` element will report it once metadata loads.
+   * Ignored when `type: "image"`.
    */
   durationMs?: number;
 
   /**
    * Optional pre-formatted duration label (e.g. "1:32"). When omitted, and
    * `durationMs` is provided, the library formats it automatically for display.
+   * Ignored when `type: "image"`.
    */
   durationLabel?: string;
 

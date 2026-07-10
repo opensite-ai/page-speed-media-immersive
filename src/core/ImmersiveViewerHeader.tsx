@@ -16,6 +16,11 @@ export interface ImmersiveViewerHeaderProps {
   onClose: () => void;
   /** Called when the mute toggle is pressed. */
   onToggleMute: () => void;
+  /**
+   * Hide the mute toggle entirely. Set by the viewer when the active slide is
+   * an image (there is no audio to toggle). Default `false`.
+   */
+  hideMute?: boolean;
   /** Label overrides for i18n. */
   labels?: {
     close?: string;
@@ -49,6 +54,7 @@ export function ImmersiveViewerHeader({
   muted,
   onClose,
   onToggleMute,
+  hideMute = false,
   labels,
 }: ImmersiveViewerHeaderProps) {
   const L = { ...DEFAULT_LABELS, ...labels };
@@ -100,6 +106,7 @@ export function ImmersiveViewerHeader({
       */}
       <div style={{ flex: 1 }} />
 
+      {hideMute ? null : (
       <button
         type="button"
         onClick={onToggleMute}
@@ -158,6 +165,7 @@ export function ImmersiveViewerHeader({
           {muted ? L.muted : L.soundOn}
         </span>
       </button>
+      )}
     </div>
   );
 }

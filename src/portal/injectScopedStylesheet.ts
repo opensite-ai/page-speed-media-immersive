@@ -124,8 +124,11 @@ const SCOPED_CSS = `
   opacity: 0;
   transition: transform 0.22s cubic-bezier(0.2,0.8,0.3,1), opacity 0.2s ease;
 }
+/* Touch devices show the glyph by default only in the legacy "always" glyph
+   mode. In "hover" mode the glyph stays hidden on touch (the whole card is the
+   tap target); in "none" mode no glyph is rendered at all. */
 @media (hover: none) {
-  [data-psmi-scope="strip"] .psmi-play-btn { opacity: 0.92; transform: scale(1); }
+  [data-psmi-scope="strip"] .psmi-glyph-always .psmi-play-btn { opacity: 0.92; transform: scale(1); }
 }
 `.trim();
 
