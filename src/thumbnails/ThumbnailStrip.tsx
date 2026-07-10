@@ -68,6 +68,14 @@ export interface ThumbnailStripProps {
    * use `renderItem` to supply them per card.
    */
   glyphMode?: "always" | "hover" | "none";
+  /**
+   * Passed through to every default-rendered `<ThumbnailCard>`. See
+   * {@link ThumbnailCardProps.posterImgProps}. Forwarded onto each card's
+   * internal poster `<Img>` (e.g. `className`, `optixFlowConfig`, `data-*`).
+   * Ignored when a `renderItem` override is supplied (the consumer owns the
+   * card, and its poster props, then).
+   */
+  posterImgProps?: Record<string, unknown>;
   className?: string;
   style?: React.CSSProperties;
 }
@@ -100,6 +108,7 @@ export function ThumbnailStrip({
   autoplayPreview = true,
   showDuration = true,
   glyphMode = "always",
+  posterImgProps,
   className,
   style,
 }: ThumbnailStripProps) {
@@ -153,6 +162,7 @@ export function ThumbnailStrip({
               autoplayPreview={autoplayPreview}
               showDuration={showDuration}
               glyphMode={glyphMode}
+              posterImgProps={posterImgProps}
             />
           ),
         )}

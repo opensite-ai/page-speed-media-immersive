@@ -103,6 +103,20 @@ export interface ThumbnailCardProps {
   className?: string;
   /** Additional inline style applied to the outer element. */
   style?: React.CSSProperties;
+  /**
+   * Extra props forwarded to the internal `@page-speed/img` `<Img>` that
+   * renders the poster (the static-poster branch — not the autoplay-preview
+   * `<video>`). Use this to pass consumer concerns such as `className`,
+   * `optixFlowConfig`, `sizes`, `loading`, or `data-*` attributes down to the
+   * image.
+   *
+   * These are spread onto the `<Img>` but the card retains ownership of the
+   * load-bearing poster contract: `src` and `alt` (and the card's positioning
+   * `style`) are always applied by the card and CANNOT be overridden here —
+   * any `src`/`alt` keys passed in are ignored. A `style` passed here is
+   * shallow-merged UNDER the card's own positioning style.
+   */
+  posterImgProps?: Record<string, unknown>;
 }
 
 function resolveWidth(size: ThumbnailSize): number {
@@ -140,6 +154,7 @@ export const ThumbnailCard = forwardRef<HTMLButtonElement, ThumbnailCardProps>(
       elevated = true,
       className,
       style,
+      posterImgProps,
     },
     ref,
   ) {
@@ -217,6 +232,20 @@ export const ThumbnailCard = forwardRef<HTMLButtonElement, ThumbnailCardProps>(
 
     const handleActivate = () => onOpen(item.id);
 
+    // Consumer-supplied poster <Img> props, sanitized. `src`/`alt` are owned
+    // by the card (the poster contract) and stripped here so a consumer
+    // cannot break them; everything else (className, optixFlowConfig, sizes,
+    // loading, data-*, style, …) is forwarded onto the <Img>. A consumer
+    // `style` is kept on the object but is shallow-merged UNDER the card's own
+    // positioning style at the render site below.
+    const safePosterImgProps = useMemo<Record<string, unknown> | undefined>(() => {
+      if (!posterImgProps) return undefined;
+      const next: Record<string, unknown> = { ...posterImgProps };
+      delete next.src;
+      delete next.alt;
+      return next;
+    }, [posterImgProps]);
+
     // A single memo to avoid recreating the outer style object on every render.
     const rootStyle = useMemo<React.CSSProperties>(
       () => ({
@@ -266,8 +295,27 @@ export const ThumbnailCard = forwardRef<HTMLButtonElement, ThumbnailCardProps>(
         onPointerLeave={
           glyphMode === "hover" ? () => setGlyphHovered(false) : undefined
         }
+        // Focus reveals the glyph ONLY for keyboard focus (`:focus-visible`).
+        // Touch taps also focus the button (per the pointer/focus spec), but
+        // the "hover" contract says the glyph must stay hidden on touch — the
+        // whole card is the tap target there. `:focus-visible` is the
+        // browser's own "did this focus come from the keyboard?" signal, so
+        // we gate on it. If the engine doesn't implement `:focus-visible`
+        // (older jsdom/happy-dom), `matches` may throw or return false — in
+        // that case we keep the glyph hidden.
         onFocus={
-          glyphMode === "hover" ? () => setGlyphHovered(true) : undefined
+          glyphMode === "hover"
+            ? (event) => {
+                let focusVisible = false;
+                try {
+                  focusVisible =
+                    event.currentTarget.matches?.(":focus-visible") ?? false;
+                } catch {
+                  focusVisible = false;
+                }
+                if (focusVisible) setGlyphHovered(true);
+              }
+            : undefined
         }
         onBlur={
           glyphMode === "hover" ? () => setGlyphHovered(false) : undefined
@@ -307,6 +355,9 @@ export const ThumbnailCard = forwardRef<HTMLButtonElement, ThumbnailCardProps>(
           />
         ) : (
           <Img
+            // Consumer passthrough first so the card's own load-bearing props
+            // (src/alt/aria-hidden and positioning style) always win below.
+            {...(safePosterImgProps as React.ComponentProps<typeof Img>)}
             src={item.poster}
             // For image items the poster IS the content, so it carries the
             // item title as its accessible name; for video posters it stays
@@ -314,6 +365,8 @@ export const ThumbnailCard = forwardRef<HTMLButtonElement, ThumbnailCardProps>(
             alt={isImage ? item.title : ""}
             aria-hidden={isImage ? undefined : "true"}
             style={{
+              // Consumer style merged UNDER the card's positioning contract.
+              ...(safePosterImgProps?.style as React.CSSProperties | undefined),
               position: "absolute",
               inset: 0,
               width: "100%",

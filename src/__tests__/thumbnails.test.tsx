@@ -146,7 +146,7 @@ describe("<ThumbnailCard>", () => {
     expect(container.querySelector(".psmi-play-hover")).toBeNull();
   });
 
-  it("glyphMode='hover': glyph hidden until mouse hover, revealed on hover and focus", () => {
+  it("glyphMode='hover': glyph hidden until mouse hover, revealed on hover", () => {
     const { getByRole, container } = render(
       <ThumbnailCard item={items[0]!} onOpen={() => {}} glyphMode="hover" />,
     );
@@ -160,7 +160,21 @@ describe("<ThumbnailCard>", () => {
     // Leaving hides it again.
     fireEvent.pointerLeave(btn);
     expect(glyph.style.opacity).toBe("0");
-    // Keyboard focus reveals it (a11y).
+  });
+
+  it("glyphMode='hover': keyboard focus (:focus-visible) reveals the glyph", () => {
+    const { getByRole, container } = render(
+      <ThumbnailCard item={items[0]!} onOpen={() => {}} glyphMode="hover" />,
+    );
+    const btn = getByRole("button") as HTMLButtonElement;
+    const glyph = container.querySelector(".psmi-play-btn") as HTMLElement;
+    // happy-dom/jsdom do not evaluate the `:focus-visible` pseudo-class, so
+    // simulate a KEYBOARD focus by stubbing `matches(":focus-visible")` → true
+    // (the same signal the browser gives on Tab focus). See ThumbnailCard's
+    // onFocus handler.
+    const realMatches = btn.matches.bind(btn);
+    btn.matches = (sel: string) =>
+      sel === ":focus-visible" ? true : realMatches(sel);
     fireEvent.focus(btn);
     expect(glyph.style.opacity).toBe("1");
     fireEvent.blur(btn);
@@ -175,6 +189,72 @@ describe("<ThumbnailCard>", () => {
     const glyph = container.querySelector(".psmi-play-btn") as HTMLElement;
     fireEvent.pointerEnter(btn, { pointerType: "touch" });
     expect(glyph.style.opacity).toBe("0");
+  });
+
+  it("glyphMode='hover': programmatic/touch focus WITHOUT :focus-visible keeps the glyph hidden", () => {
+    const { getByRole, container } = render(
+      <ThumbnailCard item={items[0]!} onOpen={() => {}} glyphMode="hover" />,
+    );
+    const btn = getByRole("button") as HTMLButtonElement;
+    const glyph = container.querySelector(".psmi-play-btn") as HTMLElement;
+    // Touch taps focus the button but are NOT `:focus-visible` — the glyph
+    // must stay hidden (the whole card is the tap target on touch).
+    btn.matches = () => false;
+    fireEvent.focus(btn);
+    expect(glyph.style.opacity).toBe("0");
+  });
+
+  it("glyphMode='hover': focus stays hidden when :focus-visible throws (unsupported engine)", () => {
+    const { getByRole, container } = render(
+      <ThumbnailCard item={items[0]!} onOpen={() => {}} glyphMode="hover" />,
+    );
+    const btn = getByRole("button") as HTMLButtonElement;
+    const glyph = container.querySelector(".psmi-play-btn") as HTMLElement;
+    // Some engines throw "not a valid selector" for `:focus-visible`; the
+    // handler must swallow it and keep the glyph hidden.
+    btn.matches = () => {
+      throw new Error("SyntaxError: ':focus-visible' is not a valid selector");
+    };
+    fireEvent.focus(btn);
+    expect(glyph.style.opacity).toBe("0");
+  });
+
+  it("forwards posterImgProps (className + data-*) onto the poster <Img>", () => {
+    const { container } = render(
+      <ThumbnailCard
+        item={items[0]!}
+        onOpen={() => {}}
+        posterImgProps={{ className: "custom-poster", "data-foo": "bar" }}
+      />,
+    );
+    const img = container.querySelector("img") as HTMLImageElement;
+    expect(img).not.toBeNull();
+    expect(img.className).toContain("custom-poster");
+    expect(img.getAttribute("data-foo")).toBe("bar");
+  });
+
+  it("posterImgProps cannot override the card-owned src/alt", () => {
+    const imageItem: MediaItem = {
+      id: "im",
+      type: "image",
+      poster: "/p.jpg",
+      title: "Pic",
+    };
+    const { container } = render(
+      <ThumbnailCard
+        item={imageItem}
+        onOpen={() => {}}
+        posterImgProps={{ src: "/evil.jpg", alt: "evil", className: "ok" }}
+      />,
+    );
+    const img = container.querySelector("img") as HTMLImageElement;
+    // alt stays the card's (item.title for image items), not the consumer's.
+    expect(img.getAttribute("alt")).toBe("Pic");
+    // src is never the consumer's value (card owns the poster src; the lazy
+    // loader may substitute a transparent pixel, but never "/evil.jpg").
+    expect(img.getAttribute("src")).not.toBe("/evil.jpg");
+    // Non-owned props still forward.
+    expect(img.className).toContain("ok");
   });
 
   it("uses a play glyph for videos and an expand glyph for images", () => {
@@ -303,6 +383,19 @@ describe("<ThumbnailStrip>", () => {
     // Titles are still present (showDuration only drops the duration).
     expect(container.textContent).toContain("First");
     expect(container.textContent).toContain("Second");
+  });
+
+  it("forwards posterImgProps through to every default card's poster <Img>", () => {
+    const { container } = render(
+      <ThumbnailStrip
+        items={items}
+        onOpen={() => {}}
+        posterImgProps={{ className: "strip-poster" }}
+      />,
+    );
+    // Both items lack a video src, so each renders the poster <Img>.
+    const imgs = container.querySelectorAll("img.strip-poster");
+    expect(imgs.length).toBe(items.length);
   });
 });
 
