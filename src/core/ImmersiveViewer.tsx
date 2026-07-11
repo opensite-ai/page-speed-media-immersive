@@ -849,11 +849,18 @@ export function ImmersiveViewer({
                   }}
                 >
                   <div
+                    className="psmi-pane"
                     style={{
                       position: "relative",
                       height: "100%",
                       width: "100%",
-                      // Constrain to 9:16 on wide viewports; letterboxed with viewerBg.
+                      // Constrain to 9:16 on wide viewports; letterboxed with
+                      // viewerBg. This inline value is the DESKTOP layout —
+                      // phones drop the clamp via the scoped stylesheet's
+                      // .psmi-pane override (see injectScopedStylesheet):
+                      // with browser chrome shrinking 100dvh, the clamp can
+                      // compute narrower than the screen and leave side
+                      // gutters, so mobile goes full-bleed like IG/TikTok.
                       maxWidth: "calc(100dvh * 9 / 16)",
                       margin: "0 auto",
                       overflow: "hidden",

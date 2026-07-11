@@ -68,6 +68,16 @@ const SCOPED_CSS = `
   [data-psmi-scope="root"] .psmi-mute-label { display: none; }
   [data-psmi-scope="root"] .psmi-mute-pill { padding: 0 6px !important; }
 }
+/* Mobile: drop the media pane's 9:16 clamp. The inline desktop clamp
+   (max-width: calc(100dvh * 9 / 16)) can compute NARROWER than the screen
+   when browser chrome shrinks 100dvh (e.g. a ~660px visible viewport clamps
+   the pane to ~371px on a 390px-wide phone), leaving black side gutters.
+   Phones render full-bleed like Instagram/TikTok — the media's
+   object-fit: cover center-crops the 9:16 content instead. !important
+   overrides the inline desktop value. */
+@media (max-width: 540px) {
+  [data-psmi-scope="root"] .psmi-pane { max-width: none !important; margin: 0 !important; }
+}
 /* Badge placement. Desktop: top-left inside the 9:16 viewport (chrome is
    letterboxed outside it, no collision). Mobile: the close button overlaps
    that corner, so the badge moves into the caption between the brand row

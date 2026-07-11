@@ -62,6 +62,30 @@ describe("<ImmersiveViewer> integration", () => {
     expect(document.querySelector(".psmi-counter")).toBeNull();
   });
 
+  it("media panes carry the psmi-pane class with the desktop 9:16 clamp inline", () => {
+    render(<ImmersiveFeed items={items} initiallyOpen />);
+    const panes = document.querySelectorAll(".psmi-pane");
+    expect(panes.length).toBe(items.length);
+    const pane = panes[0] as HTMLElement;
+    // Inline value is the DESKTOP layout; phones drop it via the scoped
+    // stylesheet's max-width:none override (see the mobile-gutter fix).
+    expect(pane.style.maxWidth).toBe("calc(100dvh * 9 / 16)");
+  });
+
+  it("scoped stylesheet drops the pane clamp on mobile (full-bleed like IG/TikTok)", () => {
+    render(<ImmersiveFeed items={items} initiallyOpen />);
+    const styles = Array.from(document.querySelectorAll("style"))
+      .map((s) => s.textContent ?? "")
+      .join("\n");
+    // The 540px override must null the clamp with !important (it overrides an
+    // inline style) so panes span the full viewport width on phones.
+    const mobileBlock = styles
+      .split("@media (max-width: 540px)")
+      .find((chunk) => chunk.includes(".psmi-pane"));
+    expect(mobileBlock).toBeDefined();
+    expect(mobileBlock).toContain("max-width: none !important");
+  });
+
   it("badge is positioned at 16px top / 16px left inside the viewport", () => {
     render(<ImmersiveFeed items={items} initiallyOpen />);
     const dialog = document.querySelector('[role="dialog"]')!;

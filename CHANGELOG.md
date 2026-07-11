@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-07-11
+
+### Fixed
+- **Mobile side gutters in the fullscreen viewer.** The media pane's 9:16
+  clamp (`max-width: calc(100dvh * 9 / 16)`, inline) could compute *narrower
+  than the screen* on phones whenever browser chrome shrank `100dvh` (e.g. a
+  ~660px visible viewport clamps the pane to ~371px on a 390px-wide phone),
+  leaving thin black gutters on both sides. Panes now carry a `psmi-pane`
+  class and the scoped stylesheet drops the clamp at the 540px breakpoint
+  (`max-width: none !important`), so phones render full-bleed like
+  Instagram/TikTok — the media's existing `object-fit: cover` center-crops
+  the 9:16 content instead. Desktop keeps the centered, letterboxed 9:16
+  column (the inline value remains the desktop layout per the
+  stylesheet-optional rule). Affects every consumer (dt-cms website-status
+  reels, `@opensite/ui` `instagram-post-grid`, client sites).
+
 ## [0.5.0] - 2026-07-10
 
 ### Added
